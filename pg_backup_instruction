@@ -1,0 +1,1 @@
+pg_dump -h 172.25.184.73 -U Z1174828 -s -n acc_treatment_layer -W -f c:\\Temp\bkp_treatment_ postgres
