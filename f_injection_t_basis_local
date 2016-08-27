@@ -1,0 +1,657 @@
+
+CREATE OR REPLACE FUNCTION acc_treatment_layer.f_injection_t_basis_local()
+
+  RETURNS TABLE(
+  rundate date,
+  rprt_stkt_id integer,
+  country character varying,
+  gl integer,
+  account_contract_number character varying,
+  customer_number character varying,
+  customer_name character varying,
+  account_type character varying,
+  currency character varying,
+  amount_fcy double precision,
+  amount_lcy double precision,
+  country_residence character varying,
+  industry_code integer,
+  customer_category character varying,
+  start_date_text character varying,
+  maturity_date_text character varying,
+  interest_effective_rate double precision,
+  interest_nominal_rate double precision,
+  interest_commitment character varying,
+  interest_date character varying,
+  bb_group character varying,
+  bank character varying,
+  start_date date,
+  maturity_date date,
+  internal_rating character varying,
+  economic_activity smallint,
+  oenb_id integer,
+  oenb_group_id integer,
+  collateral character varying,
+  long_term_rating_fcy character varying,
+  short_term_rating_fcy character varying,
+  mfi_customer integer,
+  overdraft_line character varying,
+  overdraft_line_for_guarantees character varying,
+  large_enterprise integer,
+  country_of_ultimate_risk character varying,
+  bad_debt_provision_lcy double precision,
+  overdue_amount_lcy double precision,
+  overdraft_line_center double precision,
+  loan_purpose character varying,
+  overdraft_start_date character varying,
+  overdraft_maturity_date character varying,
+  new_business character varying,
+  due character varying,
+  cancellation_notice_months character varying,
+  depot_number character varying,
+  depot_type character varying,
+  security_number character varying,
+  security_value double precision,
+  book_value_lcy double precision,
+  book_value_fcy double precision,
+  market_value_lcy double precision,
+  eligible character varying,
+  market_value_fcy double precision,
+  stock_exchange character varying,
+  collateral_owner character varying,
+  buy_currency character varying,
+  sell_currency character varying,
+  banking_trading_book character varying,
+  buy_price_fcy double precision,
+  buy_price_lcy double precision,
+  market_value_buy_side_lcy double precision,
+  sell_price_fcy double precision,
+  sell_price_lcy double precision,
+  market_value_sell_side_lcy double precision,
+  patch_counterparties character varying,
+  patch_inserted_line character varying,
+  patch_component_level character varying,
+  patch_contract_level character varying,
+  concept character varying,
+  overdue character varying,
+  non_performing character varying,
+  customer_risk character varying,
+  operation_risk character varying,
+  operation_risk_overrule character varying,
+  category character varying,
+  gl_desc character varying,
+  bs_agaap_key character varying,
+  agaap_rprt character varying,
+  bs_agaap_1 character varying,
+  bs_agaap_2 character varying,
+  bs_agaap_3 character varying,
+  detail_guv character varying,
+  pnl_agaap_key character varying,
+  codex_mapa_moedas character varying,
+  descr_mapa_moedas character varying,
+  kontoart character varying,
+  interbranch character varying,
+  module_code character varying,
+  product_code character varying,
+  product_code_desc character varying,
+  product_group_desc character varying,
+  bdgt_key character varying,
+  bs_pnl_clmn character varying,
+  gl_principal integer
+
+  ) AS
+
+  
+$BODY$
+
+
+---------------------------------------------------
+-- This first part of the query is just to take the fields from v_balanced_eom as they come
+-- In fact, v_balanced_eom might actually be an "deletable" step ... it is just to filter out the "Del" lines,
+-- so both the result of this very function (t_basis_local) as the continuation of the eom_injection_process
+-- could be derived directly from f_basis_treatment
+-- I even thought it would be a good idea to have it derived directly from f_calculated risk, where all 98 fields are available
+-- but it proved not to be the best idea, for only the "Commercial Asset" classes are there
+---------------------------------------------------
+BEGIN
+
+insert into
+	acc_treatment_layer.t_basis_local
+	
+
+SELECT
+	 rundate
+	 
+	,substr(to_char(gl, '999999999'), 2, 2)::integer as rprt_stkt_id
+	
+	,country 
+	,gl	
+	,account_contract_number
+	,customer_number
+	,customer_name
+	,account_type
+	,currency
+	,amount_fcy
+	,amount_lcy
+	,country_residence
+	,industry_code
+	,customer_category
+	,start_date_text
+	,maturity_date_text
+	,interest_effective_rate
+	,interest_nominal_rate
+	,interest_commitment
+	,interest_date
+	,bb_group
+	,bank
+	,start_date
+	,maturity_date
+	,internal_rating
+	,economic_activity
+	,oenb_id
+	,oenb_group_id
+	,collateral
+	,long_term_rating_fcy
+	,short_term_rating_fcy
+	,mfi_customer
+	,overdraft_line
+	,overdraft_line_for_guarantees
+	,large_enterprise
+	,country_of_ultimate_risk
+	,bad_debt_provision_lcy
+	,overdue_amount_lcy
+	,overdraft_line_center
+	,loan_purpose
+	,overdraft_start_date
+	,overdraft_maturity_date
+	,new_business
+	,due
+	,cancellation_notice_months
+	,depot_number
+	,depot_type
+	,security_number
+	,security_value
+	,book_value_lcy
+	,book_value_fcy
+	,market_value_lcy
+	,eligible
+	,market_value_fcy
+	,stock_exchange
+	,collateral_owner
+	,buy_currency
+	,sell_currency
+	,banking_trading_book
+	,buy_price_fcy
+	,buy_price_lcy
+	,market_value_buy_side_lcy
+	,sell_price_fcy
+	,sell_price_lcy
+	,market_value_sell_side_lcy
+	,patch_counterparties
+	,patch_inserted_line
+	,patch_component_level
+	,patch_contract_level
+	,concept
+ 	,NULL::character varying AS overdue
+	,non_performing
+	,customer_risk
+	,operation_risk
+	,operation_risk_overrule
+	,category
+	,gl_desc
+	,bs_agaap_key
+	,agaap_rprt
+	,bs_agaap_1
+	,bs_agaap_2
+	,bs_agaap_3
+	,detail_guv
+	,pnl_agaap_key
+	,codex_mapa_moedas
+	,descr_mapa_moedas
+	,kontoart
+	,interbranch
+
+
+	-- The field flex_mdl_code identify if this line contains data 
+	-- about "ACCOUNT" or the Flexcube Module (first 2 letters from the product)
+	,CASE 
+		WHEN	char_length(account_contract_number)	< 10		THEN 'ACCOUNT'
+		WHEN	char_length(account_contract_number)	< 12		THEN 'ACCOUNT'	
+		ELSE	substr(account_contract_number, 4, 2)
+	END AS module_code
+	
+	-- The field flex_prdct_code identify if this line contains data 
+	-- about "ACCOUNT" or the Flexcube Product Code 
+	,CASE 
+		WHEN	char_length(account_contract_number)	< 10		THEN 'ACCOUNT'
+		WHEN	char_length(account_contract_number)	< 12		THEN 'ACCOUNT'	
+		ELSE	substr(account_contract_number, 4, 4)
+	END AS product_code
+
+--	,product_desc
+-- 	,product_group_desc
+-- 	,bdgt_key
+-- 	,bs_pnl_clmn
+-- 	,gl_principal
+
+
+
+
+
+FROM
+		acc_treatment_layer.f_basis_treatment()
+WHERE
+		concept <> 'CF_DEL'
+;
+----------------------------------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------
+-- HERE THE STEP 1A SHOULD COME INTO PLACE, BUT SINCE THIS IS ACTUALLY A "COUNTERPARTIES" CORRECTION,
+-- WE WILL NOT CORRECT IT HERE... 
+----------------------------------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------
+
+
+
+
+/*
+=================================================================================================================
+=================================================================================================================
+=================================================================================================================
+	-- 
+	-- CHECKPOINT 1
+	-- Counts lines for each "Macro Gl" (the first 2 numbers on GL)
+		
+	SELECT
+	 
+		 to_char(current_timestamp,'YYYY-MM-DD HH24:MI') AS runtime
+		,'checkpoint_1'::text AS checkpoint
+		,substr(to_char(gl, '999999999'), 2, 2)::integer AS index
+		,COUNT(rundate) AS amount_lines
+	
+	INTO acc_staging.checkpoints
+	FROM acc_treatment_layer.v_basis_balanced_eom
+	GROUP BY runtime, checkpoint, index
+	ORDER BY index;
+
+
+	-- 
+	-- CHECKPOINT 2
+	-- Counts lines separating between PnL/BS
+
+	SELECT
+	 
+		 to_char(current_timestamp,'YYYY-MM-DD HH24:MI') AS runtime
+		,'checkpoint_2'::text as checkpoint
+		,CASE
+			WHEN substr(to_char(gl, '999999999'), 2, 2)::integer IN ('14', '24')	THEN 'PnL Amount Lines'
+			ELSE 'BS Amount Lines'	
+		END as index
+		,count(rundate) AS amount_lines
+
+	INTO acc_staging.checkpoints	
+	FROM acc_treatment_layer.v_basis_balanced_eom
+	GROUP BY runtime, checkpoint, index;
+	
+	-- 
+	-- CHECKPOINT 3
+	-- 
+	-- If there is mismatch(missing) between verknupfung_0 and t_index it will show here.
+	-- This table should be empty.
+
+	INSERT INTO checkpoints
+	SELECT 
+		 to_char(current_timestamp,'YYYY-MM-DD HH24:MI') AS runtime
+		,'checkpoint_3' as checkpoint
+		,'should be empty - check t_index' as index
+		,NULL AS amount_lines
+		,rundate
+		,country
+		,gl
+		,account_contract_number
+		,customer_name
+	FROM 	acc_treatment_layer.v_basis_balanced_eom
+		LEFT JOIN 	acc_treatment_layer.t_index_country 
+		ON 			acc_treatment_layer.v_basis_balanced_eom.country = acc_treatment_layer.t_index_country.country
+		AND 			acc_treatment_layer.v_basis_balanced_eom.gl = acc_treatment_layer.t_index_country.gl
+	WHERE t_index_country.gl is null;
+
+
+	-- CHECKPOINT 4
+	-- 
+	-- Lists the keys on t_index. Verify if the keys are somehow different (new keys OR different case*)
+	-- since Postgresql is case sensitive, if the keys are in a different case, there will be a mismatch.
+	-- This table should be empty.
+	
+	INSERT INTO checkpoints
+	SELECT 
+		 to_char(current_timestamp,'YYYY-MM-DD HH24:MI') AS runtime
+		,'checkpoint_4' as checkpoint
+		,'should be empty - check t_index' as index
+		,NULL AS amount_lines
+		,t_index_country.index_bbag_assets_bank
+		,t_index_country.index_bbag_assets_non_bank
+		,t_index_country.index_bbag_liabilities_bank
+		,t_index_country.index_bbag_liabilities_non_bank
+	FROM
+		acc_treatment_layer.t_index_country
+	WHERE
+			index_bbag_assets_bank		not in ( '-', 'A1', 'A10', 'A10a', 'A11', 'A11a', 'A12', 'A12a', 'A13', 'A14', 'A2a', 'A2b', 'A3a', 'A3b', 'A3T', 'A4', 'A4T', 'A5a', 'A5b', 'A5ba', 'A6', 'A7', 'A7a', 'A8', 'A8a', 'A9', 'C1a', 'C1b', 'C2', 'DE', 'L10a', 'L10b', 'L11a', 'L11b', 'L11c', 'L12', 'L13a', 'L13b', 'L14a', 'L14ba', 'L14bb', 'L14bc', 'L14bd', 'L15', 'L1a', 'L1b', 'L1T', 'L2aa', 'L2ab', 'L2ba', 'L2bb', 'L2bT', 'L3a', 'L3b', 'L4', 'L5', 'L6a', 'L6b', 'L6c', 'L6d', 'L6e', 'L7', 'L8', 'L9', 'ME', 'PL10', 'PL11', 'PL12', 'PL13', 'PL14', 'PL15', 'PL15a', 'PL16', 'PL16a', 'PL18', 'PL19', 'PL1a', 'PL1b', 'PL2', 'PL20a', 'PL20b', 'PL20c', 'PL20d', 'PL21', 'PL3a', 'PL3b', 'PL3c', 'PL4', 'PL5', 'PL6', 'PL7', 'PL8aa', 'PL8ab', 'PL8ac', 'PL8ad', 'PL8ae', 'PL8af', 'PL8b', 'PL9' )
+		OR	index_bbag_assets_non_bank	not in ( '-', 'A1', 'A10', 'A10a', 'A11', 'A11a', 'A12', 'A12a', 'A13', 'A14', 'A2a', 'A2b', 'A3a', 'A3b', 'A3T', 'A4', 'A4T', 'A5a', 'A5b', 'A5ba', 'A6', 'A7', 'A7a', 'A8', 'A8a', 'A9', 'C1a', 'C1b', 'C2', 'DE', 'L10a', 'L10b', 'L11a', 'L11b', 'L11c', 'L12', 'L13a', 'L13b', 'L14a', 'L14ba', 'L14bb', 'L14bc', 'L14bd', 'L15', 'L1a', 'L1b', 'L1T', 'L2aa', 'L2ab', 'L2ba', 'L2bb', 'L2bT', 'L3a', 'L3b', 'L4', 'L5', 'L6a', 'L6b', 'L6c', 'L6d', 'L6e', 'L7', 'L8', 'L9', 'ME', 'PL10', 'PL11', 'PL12', 'PL13', 'PL14', 'PL15', 'PL15a', 'PL16', 'PL16a', 'PL18', 'PL19', 'PL1a', 'PL1b', 'PL2', 'PL20a', 'PL20b', 'PL20c', 'PL20d', 'PL21', 'PL3a', 'PL3b', 'PL3c', 'PL4', 'PL5', 'PL6', 'PL7', 'PL8aa', 'PL8ab', 'PL8ac', 'PL8ad', 'PL8ae', 'PL8af', 'PL8b', 'PL9' )
+		OR	index_bbag_liabilities_bank	not in ( '-', 'A1', 'A10', 'A10a', 'A11', 'A11a', 'A12', 'A12a', 'A13', 'A14', 'A2a', 'A2b', 'A3a', 'A3b', 'A3T', 'A4', 'A4T', 'A5a', 'A5b', 'A5ba', 'A6', 'A7', 'A7a', 'A8', 'A8a', 'A9', 'C1a', 'C1b', 'C2', 'DE', 'L10a', 'L10b', 'L11a', 'L11b', 'L11c', 'L12', 'L13a', 'L13b', 'L14a', 'L14ba', 'L14bb', 'L14bc', 'L14bd', 'L15', 'L1a', 'L1b', 'L1T', 'L2aa', 'L2ab', 'L2ba', 'L2bb', 'L2bT', 'L3a', 'L3b', 'L4', 'L5', 'L6a', 'L6b', 'L6c', 'L6d', 'L6e', 'L7', 'L8', 'L9', 'ME', 'PL10', 'PL11', 'PL12', 'PL13', 'PL14', 'PL15', 'PL15a', 'PL16', 'PL16a', 'PL18', 'PL19', 'PL1a', 'PL1b', 'PL2', 'PL20a', 'PL20b', 'PL20c', 'PL20d', 'PL21', 'PL3a', 'PL3b', 'PL3c', 'PL4', 'PL5', 'PL6', 'PL7', 'PL8aa', 'PL8ab', 'PL8ac', 'PL8ad', 'PL8ae', 'PL8af', 'PL8b', 'PL9' ) 
+		OR	index_bbag_liabilities_non_bank	not in ( '-', 'A1', 'A10', 'A10a', 'A11', 'A11a', 'A12', 'A12a', 'A13', 'A14', 'A2a', 'A2b', 'A3a', 'A3b', 'A3T', 'A4', 'A4T', 'A5a', 'A5b', 'A5ba', 'A6', 'A7', 'A7a', 'A8', 'A8a', 'A9', 'C1a', 'C1b', 'C2', 'DE', 'L10a', 'L10b', 'L11a', 'L11b', 'L11c', 'L12', 'L13a', 'L13b', 'L14a', 'L14ba', 'L14bb', 'L14bc', 'L14bd', 'L15', 'L1a', 'L1b', 'L1T', 'L2aa', 'L2ab', 'L2ba', 'L2bb', 'L2bT', 'L3a', 'L3b', 'L4', 'L5', 'L6a', 'L6b', 'L6c', 'L6d', 'L6e', 'L7', 'L8', 'L9', 'ME', 'PL10', 'PL11', 'PL12', 'PL13', 'PL14', 'PL15', 'PL15a', 'PL16', 'PL16a', 'PL18', 'PL19', 'PL1a', 'PL1b', 'PL2', 'PL20a', 'PL20b', 'PL20c', 'PL20d', 'PL21', 'PL3a', 'PL3b', 'PL3c', 'PL4', 'PL5', 'PL6', 'PL7', 'PL8aa', 'PL8ab', 'PL8ac', 'PL8ad', 'PL8ae', 'PL8af', 'PL8b', 'PL9' );
+
+
+ 	-- CHECKPOINT 5
+	-- 
+	-- the field bs_astgaap_key should be filled in ALL the lines of verknupfung_0
+	-- but if there isn't a match on all the lines (this query will list the mismatches)
+	-- If any line is listed here, this GL should be filled on t_index
+	-- IN THE NEW PROCESS, BDGT_KEY AND GL_PRINCIPAL NEED TO BE VERIFIED IN THE FUTURE
+	
+	INSERT INTO checkpoints	
+	SELECT
+		 to_char(current_timestamp,'YYYY-MM-DD HH24:MI') AS runtime
+		,'checkpoint_5' as checkpoint
+		,'should be empty - check t_index' as index
+		,NULL AS amount_lines
+		,t_basis_local.rundate
+		,t_basis_local.country
+		,t_basis_local.gl
+		,t_basis_local.account_contract_number
+		,t_basis_local.customer_name
+		,t_basis_local.bs_agaap_key
+		,t_basis_local.pnl_agaap_key
+-- 		,t_basis_local.bdgt_key
+		,t_basis_local.flex_prdct_code
+-- 		,t_basis_local.gl_prncpl
+	FROM
+		acc_treatment_layer.t_basis_local
+		LEFT JOIN	acc_treatment_layer.t_index_country ON
+				t_basis_local.gl = t_index_country.gl
+			AND	t_basis_local.country = t_index_country.country
+
+	WHERE t_index_country.gl is null
+
+
+
+	-- 
+	-- CHECKPOINT 6
+	-- 
+	-- Lists any bs_astgaap_key that should not be used. 
+	-- This list should be empty
+	
+	INSERT INTO checkpoints
+	SELECT 
+		to_char(current_timestamp,'YYYY-MM-DD HH24:MI') AS runtime
+		,'checkpoint_6' as checkpoint
+		,'should be empty - check both t_index and the query' as index
+		,NULL AS amount_lines
+		,t_basis_local.rundate
+		,t_basis_local.country
+		,t_basis_local.gl
+		,t_basis_local.account_contract_number
+		,t_basis_local.customer_name
+		,t_basis_local.bs_agaap_key
+		,t_basis_local.pnl_agaap_key
+-- 		,t_basis_local.bdgt_key
+		,t_basis_local.flex_prdct_code
+-- 		,t_basis_local.gl_prncpl
+	FROM
+		acc_treatment_layer.t_basis_local
+		
+	WHERE
+		bs_agaap_key not in ( 'A1', 'A10', 'A10a', 'A11', 'A11a', 'A12', 'A12a', 'A13', 'A14', 'A2a', 'A2b', 'A3a', 'A3b', 'A3T', 'A4', 'A4T', 'A5a', 'A5b', 'A5ba', 'A6', 'A7', 'A7a', 'A8', 'A8a', 'A9', 'C1a', 'C1b', 'C2', 'DE', 'L10a', 'L10b', 'L11a', 'L11b', 'L11c', 'L12', 'L13a', 'L13b', 'L14a', 'L14ba', 'L14bb', 'L14bc', 'L14bd', 'L15', 'L1a', 'L1b', 'L1T', 'L2aa', 'L2ab', 'L2ba', 'L2bb', 'L3a', 'L3b', 'L4', 'L5', 'L6a', 'L6b', 'L6c', 'L6d', 'L6e', 'L7', 'L8', 'L9', 'ME', 'PL10', 'PL11', 'PL12', 'PL13', 'PL14', 'PL15', 'PL15a', 'PL16', 'PL16a', 'PL18', 'PL19', 'PL1a', 'PL1b', 'PL2', 'PL20a', 'PL20b', 'PL20c', 'PL20d', 'PL21', 'PL3a', 'PL3b', 'PL3c', 'PL4', 'PL5', 'PL6', 'PL7', 'PL8aa', 'PL8ab', 'PL8ac', 'PL8ad', 'PL8ae', 'PL8af', 'PL8b', 'PL9' )
+	;	
+	
+	-- 
+	-- CHECKPOINT 7
+	-- 
+	-- Counts the amount of lines where bs_astgaap_key is "L13a"
+	
+	INSERT INTO checkpoints
+	SELECT 
+		to_char(current_timestamp,'YYYY-MM-DD HH24:MI') AS runtime
+		,'checkpoint_7' as checkpoint
+		,'lines bs_astgaap_key L13a/L13b' as index
+		,count(rundate) as amount_lines
+	FROM
+		acc_treatment_layer.t_basis_local 
+	WHERE
+		bs_agaap_key IN ('L13a', 'L13b')
+		
+	GROUP BY runtime, bs_agaap_key
+	ORDER BY bs_agaap_key
+	
+	;
+	
+	-- 
+	-- CHECKPOINT 8
+	-- 
+	-- Counts the field pnl_astgaap_key where the key is PL* (not '-')
+	
+	INSERT INTO checkpoints
+	SELECT 
+		 to_char(current_timestamp,'YYYY-MM-DD HH24:MI') AS runtime
+		,'checkpoint_8' as checkpoint
+		,'lines pnl_astgaap_key PL*' as index
+		,count(rundate) as amount_lines
+	FROM
+		acc_treatment_layer.t_basis_local 
+		
+	WHERE
+		pnl_agaap_key IN ('PL1a', 'PL1b', 'PL2', 'PL3b', 'PL3c', 'PL4', 'PL5', 'PL6', 'PL7', 'PL8aa', 'PL8ab', 'PL8ac', 'PL8ad', 'PL8ae', 'PL8af', 'PL8b', 'PL9', 'PL10', 'PL11', 'PL12', 'PL13', 'PL14', 'PL15', 'PL16a', 'PL18', 'PL19', 'PL20a', 'PL20b', 'PL20c', 'PL21' )
+
+	;
+=================================================================================================================
+=================================================================================================================
+=================================================================================================================
+*/	
+
+
+	
+-- 		  _____ _            ____  _     
+-- 		 / ____| |          |___ \| |    
+-- 		| (___ | |_ ___ _ __  __) | |__  
+-- 		 \___ \| __/ _ \ '_ \|__ <| '_ \ 
+-- 		 ____) | ||  __/ |_) |__) | |_) |
+-- 		|_____/ \__\___| .__/____/|_.__/ 
+-- 		               | |               
+-- 		               |_|     	
+
+-- This query fill the following fields on verknupfung_0: bdgt_key, bs_pnl_clmn, gl_number_desc
+-- Takes around 17 minutes for 5M lines
+
+
+
+UPDATE acc_treatment_layer.t_basis_local
+SET 	
+	bdgt_key =
+		CASE 
+			WHEN bs_agaap_key = 'L13a' THEN pnl_agaap_key
+			ELSE bs_agaap_key	
+		END, 	
+	bs_pnl_clmn = 
+		CASE 
+			WHEN rprt_stkt_id = '14' or rprt_stkt_id = '24' THEN 'PnL'
+			ELSE 'BS'
+		END
+;
+
+
+-- 			
+-- 		  _____ _            ____       
+-- 		 / ____| |          |___ \      
+-- 		| (___ | |_ ___ _ __  __) | ___ 
+-- 		 \___ \| __/ _ \ '_ \|__ < / __|
+-- 		 ____) | ||  __/ |_) |__) | (__ 
+-- 		|_____/ \__\___| .__/____/ \___|
+-- 		               | |              
+-- 		               |_|    
+
+-- This query references a table (t_product_components) in order to bind each 
+-- Interest GL to its correspondent Capital GL, and then fill the field gl_principal
+
+UPDATE 
+	acc_treatment_layer.t_basis_local 
+	
+SET
+	gl_principal	= 	t_product_components.gl_principal
+FROM
+	acc_treatment_layer.t_product_components
+WHERE
+	t_basis_local.gl = t_product_components.gl_interest
+;
+
+
+/*
+============================================================================================
+============================================================================================
+============================================================================================
+
+	-- CHECKPOINT 9
+	-- 
+	-- Counts the amount of lines that should be impacted on Step3c and Step3d.
+	INSERT INTO checkpoints
+	SELECT 
+		to_char(current_timestamp,'YYYY-MM-DD HH24:MI') AS runtime, 
+		'checkpoint_9' as checkpoint,
+		'lines that should impact on Step3c and Step3d' as index,
+		count(rundate) as amount_lines
+	FROM
+		acc_treatment_layer.t_basis_local
+		
+	WHERE
+		pnl_agaap_key IN ('PL1a', 'PL1b', 'PL2')
+	;
+	
+	
+	-- 
+	-- CHECKPOINT 10
+	-- 
+	-- Counts the amount of impacted lines on Step3c
+	
+	INSERT INTO checkpoints
+	SELECT 
+		to_char(current_timestamp,'YYYY-MM-DD HH24:MI') AS runtime, 
+		'checkpoint_10' as checkpoint,
+		'lines that were impacted on Step3c' as index,
+		count(rundate) as amount_lines
+	FROM
+		acc_treatment_layer.t_basis_local
+	WHERE
+		gl_principal is not null ;	
+
+
+
+
+	-- 
+	-- CHECKPOINT 11
+	-- 
+	-- Checks if there is any missing "account" categorization on keys (.....) from the tables t_product_adjustments_branch and t_product_adjustments_gl
+	-- t_product_adjustments_branch are gls which unfortunately are used different by Business Units.
+	-- this list should be empty.
+	
+	INSERT INTO checkpoints
+	SELECT DISTINCT 
+		to_char(current_timestamp,'YYYY-MM-DD HH24:MI') AS runtime, 
+		'checkpoint_11' as checkpoint,
+		'should be empty - check both t_prdct_adjst_2 and t_prdct_adjst_1' as index,
+		NULL AS amount_lines,
+		t_basis_local.rundate,
+		t_basis_local.country,
+		t_basis_local.gl,
+		t_basis_local.account_contract_number,
+		t_basis_local.customer_name,
+		t_basis_local.bs_agaap_key,
+		t_basis_local.pnl_agaap_key,
+		t_basis_local.bdgt_key,
+		t_basis_local.flex_prdct_code,
+		t_basis_local.gl_principal
+	FROM  
+		acc_treatment_layer.t_basis_local 
+			LEFT JOIN	acc_treatment_layer.t_product_adjustments_gl ON
+				t_basis_local.gl = t_product_adjustments_gl.gl
+
+			LEFT JOIN	acc_treatment_layer.t_product_adjustments_branch ON
+					t_basis_local.gl = t_product_adjustments_branch.gl
+				AND	t_basis_local.country = t_product_adjustments_branch.country
+
+	WHERE
+			t_basis_local.flex_prdct_code 	= 'ACCOUNT'
+		AND	t_basis_local.bdgt_key		IN (SELECT DISTINCT key FROM acc_treatment_layer.t_agaap_structure where product_detail IS TRUE) -- Only certain items from the BS and PnL are detailed to product level. This select shows the list.
+		AND	t_product_adjustments_gl.gl 		IS NULL
+		AND	t_product_adjustments_branch.gl 	IS NULL
+		AND	t_product_adjustments_branch.country 	IS NULL
+	;
+
+============================================================================================
+============================================================================================
+============================================================================================
+*/
+
+
+
+
+
+
+-- 		  _____ _            ____       
+-- 		 / ____| |          |___ \      
+-- 		| (___ | |_ ___ _ __  __) | ___ 
+-- 		 \___ \| __/ _ \ '_ \|__ < / _ \
+-- 		 ____) | ||  __/ |_) |__) |  __/
+-- 		|_____/ \__\___| .__/____/ \___|
+-- 		               | |              
+-- 		               |_|      
+--	A number of lines are introduced in the Center File through Batch Input, and when it is the case Product and Contract Details are lost.
+--	The following 2 steps are related to adjustments that are Branch Specific, and adjustments that are GL Based.
+
+UPDATE
+	acc_treatment_layer.t_basis_local 
+SET	
+	product_code = t_product_adjustments_gl.flex_prdct_code
+FROM
+	acc_treatment_layer.t_product_adjustments_gl
+WHERE
+		t_basis_local.gl 			= t_product_adjustments_gl.gl
+	AND	t_basis_local.product_code		= 'ACCOUNT'
+	AND	t_basis_local.bdgt_key		IN (SELECT DISTINCT key FROM acc_treatment_layer.t_agaap_structure where product_detail IS TRUE)
+;
+		
+-- 		
+-- 		  _____ _            ____   __ 
+-- 		 / ____| |          |___ \ / _|
+-- 		| (___ | |_ ___ _ __  __) | |_ 
+-- 		 \___ \| __/ _ \ '_ \|__ <|  _|
+-- 		 ____) | ||  __/ |_) |__) | |  
+-- 		|_____/ \__\___| .__/____/|_|  
+-- 		               | |             
+-- 		               |_|
+
+UPDATE
+	acc_treatment_layer.t_basis_local 
+SET	
+	product_code = t_product_adjustments_country.flex_prdct_code
+FROM
+	acc_treatment_layer.t_product_adjustments_country
+WHERE
+		t_basis_local.gl					= t_product_adjustments_country.gl
+	AND	t_basis_local.country				= t_product_adjustments_country.country
+	AND	t_basis_local.product_code	= 'ACCOUNT'
+	AND	t_basis_local.bdgt_key			IN (SELECT DISTINCT key FROM acc_treatment_layer.t_agaap_structure where product_detail IS TRUE)
+	;
+	
+RETURN;
+
+END;
+
+
+$BODY$
+  LANGUAGE sql VOLATILE
+  COST 100
+  ROWS 150;
+ALTER FUNCTION acc_treatment_layer.f_injection_t_basis_local()
+  OWNER TO "RW";
+GRANT EXECUTE ON FUNCTION acc_treatment_layer.f_injection_t_basis_local() TO public;
+GRANT EXECUTE ON FUNCTION acc_treatment_layer.f_injection_t_basis_local() TO "RO" WITH GRANT OPTION;
+GRANT EXECUTE ON FUNCTION acc_treatment_layer.f_injection_t_basis_local() TO "RW";
