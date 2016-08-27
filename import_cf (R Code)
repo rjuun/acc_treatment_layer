@@ -1,0 +1,595 @@
+
+Sys.setenv(LANG = "en_US.UTF-8")
+options(scipen=999)
+
+# install.packages("data.table")
+library(data.table)
+library(RPostgreSQL)
+library(caTools)
+
+
+#-------------------------------------------------------
+#This is function to open a connection to the database whenever the object is instantiated
+connect=function(){
+  pswd <- base64decode("cGFzc3dvcmQ9U3RhZ2luZzAxKQ==", "character")
+  drv <- dbDriver("PostgreSQL")
+  con <- dbConnect(drv,host="172.25.184.73",port=5432,dbname="postgres",user="staging_importer",password=pswd)
+  return(con)
+}
+#-------------------------------------------------------
+
+# Save the original folder
+original_folder <- getwd()
+
+# set the filepath and name of the csv to be exported
+
+# file_out_amort_rates = "C:\\R\\FDW_AMORT_RATES.csv"
+# file_out_centerfiles = "C:\\R\\FDW_CENTERFILE.csv"
+# file_out_counterparties = "C:\\R\\FDW_COUNTERPARTIES.csv"
+# file_out_amort_rates_struct = "C:\\R\\FDW_AMORT_RATES_STRUCT.csv"
+# file_out_centerfiles_struct = "C:\\R\\FDW_CENTERFILE_STRUCT.csv"
+# file_out_counterparties_struct = "C:\\R\\FDW_COUNTERPARTIES_STRUCT.csv"
+
+file_out_amort_rates = "\\\\172.25.184.73\\frexbase_dump\\staging_area\\FDW_AMORT_RATES.csv"
+file_out_centerfiles = "\\\\172.25.184.73\\frexbase_dump\\staging_area\\FDW_CENTERFILE.csv"
+file_out_counterparties = "\\\\172.25.184.73\\frexbase_dump\\staging_area\\FDW_COUNTERPARTIES.csv"
+file_out_amort_rates_struct = "\\\\172.25.184.73\\frexbase_dump\\staging_area\\FDW_AMORT_RATES_STRUCT.csv"
+file_out_centerfiles_struct = "\\\\172.25.184.73\\frexbase_dump\\staging_area\\FDW_CENTERFILE_STRUCT.csv"
+file_out_counterparties_struct = "\\\\172.25.184.73\\frexbase_dump\\staging_area\\FDW_COUNTERPARTIES_STRUCT.csv"
+
+
+
+# set the paths to be taken as source.
+path_source = c("\\\\SRWLON01799\\VIENNA\\INTERNAL\\IFLEXREPORT\\FREPORT\\PRD", 
+                "\\\\SRWLON01799\\PARIS\\INTERNAL\\IFLEXREPORT\\FREPORT\\PRD", 
+                "\\\\SRWLON01799\\MILAN\\INTERNAL\\IFLEXREPORT\\FREPORT\\PRD", 
+                "\\\\SRWLON01799\\LISBON\\INTERNAL\\IFLEXREPORT\\FREPORT\\PRD", 
+                "\\\\SRWLON01799\\MADRID\\INTERNAL\\IFLEXREPORT\\FREPORT\\PRD", 
+                "\\\\SRWLON01799\\FRANKFURT\\INTERNAL\\IFLEXREPORT\\FREPORT\\PRD")
+
+
+# connect to the database
+print("---------------------------------------------------------------------------------------------------")
+print("  Phase 1: Connect to Database, Check available CF,CP,AR files and export them to a single CSV.    ")
+print("---------------------------------------------------------------------------------------------------")
+
+# calls the function to connect to the database
+conn=connect() 
+
+# --------------------------------------------------------------------------------------------------------------
+#| Phase 1: Identify which dates are available, and for the ones that are not yet in the DB, dump to a CSV.     |
+# --------------------------------------------------------------------------------------------------------------
+
+# Goes to each path of the source (the index number is important, that's why we use the index and length approach)
+########################################################################################################################################
+#### Here it sets index_path (index for the path) as a variable that goes from 1 until the total lenght of the path_source, which is 6
+#### Just to remember, path_source is the whole list of the folders we want the code to step into.
+#### You will see that, later on, current_path is announced, which refers to a single path that will be used during the "for" loop,
+#### while the index_path is incremented at the end of processing each loop. 
+########################################################################################################################################
+
+for(index_path in 1:length(path_source) )
+{
+  current_path <- path_source[index_path]
+  
+  print(paste("Processing:",current_path))
+  
+  # Goes to the path:
+  setwd(current_path)
+  
+  ###################
+  # From now on, all the lines are executed 3 times, one for each type of file:
+  ###################
+  
+  # Gets the list of each type of file from the source folder and set them as "lists" from which the dates will be extracted
+  list_of_amort_rates_files <- list.files(path = ".", pattern="DXFB_AMORTIZATION_RATES_COMP_[0-9]", all.files = FALSE, ignore.case=TRUE)
+  list_of_centerfiles <- list.files(path = ".", pattern="DXFB_CENTERNEW_[0-9]", all.files = FALSE, ignore.case=TRUE)
+  list_of_counterparties <- list.files(path = ".", pattern="DXFB_COUNTERPARTIES_[0-9]", all.files = FALSE, ignore.case=TRUE)
+  
+  # Extract from each of the lists of files (CF, Counter and Amort) the dates (rundates) from the file names.
+  #### the function gsub finds a pattern text and replaces it... in this case for blank.
+  #### then the function striptime transfers the left text of year month day into real dates to be compared.
+  list_of_amort_rates_dates_available <- strptime(gsub(".._DXFB_AMORTIZATION_RATES_COMP_|.csv","",list_of_amort_rates_files),format="%Y%m%d")
+  list_of_centerfiles_dates_available <- strptime(gsub(".._DXFB_CENTERNEW_|.csv","",list_of_centerfiles),format="%Y%m%d")
+  list_of_counterparties_dates_available <- strptime(gsub(".._DXFB_COUNTERPARTIES_|.csv","",list_of_counterparties),format="%Y%m%d")
+  
+  # Extract the Branch from the first file name (theoretically each folder only contains the information of ONE branch. If this is not true, we have some problems)
+  #### from the same list of files (CF, Counter and Amort) we extract the name of the country... only first file [1]
+  #### ideally, we should extract the country_date pair, just to make sure no problem would happen in the future
+  branch_amort_rates <- toupper(gsub("_.*",'',list_of_amort_rates_files[1]))
+  branch_centerfiles <- toupper(gsub("_.*",'',list_of_centerfiles[1]))
+  branch_counterparties <- toupper(gsub("_.*",'',list_of_counterparties[1]))
+  
+  
+  
+  ######## get back here to solve the date format !!! ########
+  # reduces the list of the available dates, since we don't want any future date as well as anything before 2016-03-01 (arbitrary date, for testing purposes)
+  #### subset takes a list of dates (CF, Counter and Amort) and restrict to those that are between today and the last 15 days
+  list_of_amort_rates_dates_available <- subset(list_of_amort_rates_dates_available, list_of_amort_rates_dates_available > Sys.Date()-10 & list_of_amort_rates_dates_available <= as.character.Date(Sys.Date()))
+  list_of_centerfiles_dates_available <- subset(list_of_centerfiles_dates_available, list_of_centerfiles_dates_available > Sys.Date()-10 & list_of_amort_rates_dates_available <= as.character.Date(Sys.Date()))
+  list_of_counterparties_dates_available <- subset(list_of_counterparties_dates_available, list_of_counterparties_dates_available > Sys.Date()-10 & list_of_amort_rates_dates_available <= as.character.Date(Sys.Date()))
+  
+  
+  # builds a SQL statement to look for the dates already imported.
+  # sql_statement_amort_rates <- paste0("select rundate ",
+  #                                     "from t_imported_files ", 
+  #                                     "where available is true ", 
+  #                                     "and filetype = 'SCHEDLS' ", 
+  #                                     "and branch = '", branch_amort_rates ,"'", 
+  #                                     "and rundate in (", paste0("\'",list_of_amort_rates_dates_available,"\'", collapse = ", "), ") and rundate <> '2016-03-02' ")
+  # 
+  # sql_statement_centerfiles <- paste0("select rundate ",
+  #                                     "from t_imported_files ", 
+  #                                     "where available is true ", 
+  #                                     "and filetype = 'CENTERF' ", 
+  #                                     "and branch = '", branch_centerfiles ,"'", 
+  #                                     "and rundate in (", paste0("\'",list_of_centerfiles_dates_available,"\'", collapse = ", "), ") and rundate <> '2016-03-02' ")
+  # 
+  # sql_statement_counterparties <- paste0("select rundate ",
+  #                                     "from t_imported_files ", 
+  #                                     "where available is true ", 
+  #                                     "and filetype = 'COUNTER' ", 
+  #                                     "and branch = '", branch_counterparties ,"'", 
+  #                                     "and rundate in (", paste0("\'",list_of_counterparties_dates_available,"\'", collapse = ", "), ") and rundate <> '2016-03-02' ")
+  ####
+  ####
+  ####
+  
+  
+  
+  
+  sql_statement_amort_rates <- paste0("select rundate ",
+                                      "from acc_staging.t_import_control ", 
+                                      "where status_import is true ", 
+                                      "and filetype = 'SCHEDLS' ", 
+                                      "and branch = '", branch_amort_rates ,"'", 
+                                      "and rundate in (", paste0("\'",list_of_amort_rates_dates_available,"\'", collapse = ", "), ")")
+  
+  sql_statement_centerfiles <- paste0("select rundate ",
+                                      "from acc_staging.t_import_control ", 
+                                      "where status_import is true  ", 
+                                      "and filetype = 'CENTERF' ", 
+                                      "and branch = '", branch_centerfiles ,"'", 
+                                      "and rundate in (", paste0("\'",list_of_centerfiles_dates_available,"\'", collapse = ", "), ")")
+  
+  sql_statement_counterparties <- paste0("select rundate ",
+                                         "from Acc_staging.t_import_control ", 
+                                         "where status_import is true  ", 
+                                         "and filetype = 'COUNTER' ", 
+                                         "and branch = '", branch_counterparties ,"'", 
+                                         "and rundate in (", paste0("\'",list_of_counterparties_dates_available,"\'", collapse = ", "), ")")
+  
+  # Execute the built statements and put the set of dates in a list.
+ 
+  list_of_dates_already_loaded_amort_rates <- dbGetQuery(conn,sql_statement_amort_rates)
+  list_of_dates_already_loaded_centerfiles <- dbGetQuery(conn,sql_statement_centerfiles)
+  list_of_dates_already_loaded_counterparties <- dbGetQuery(conn,sql_statement_counterparties)
+  
+  #-----------------------
+  if (is.data.frame(list_of_dates_already_loaded_amort_rates) && nrow(list_of_dates_already_loaded_amort_rates)==0) {
+    list_of_dates_already_loaded_amort_rates <- as.Date(c("2001-01-01"))
+  } else {
+    list_of_dates_already_loaded_amort_rates <- list_of_dates_already_loaded_amort_rates[[1]]
+  }
+  #-----------------------
+  if (is.data.frame(list_of_dates_already_loaded_centerfiles) && nrow(list_of_dates_already_loaded_centerfiles)==0) {
+    list_of_dates_already_loaded_centerfiles <- as.Date(c("2001-01-01"))
+  } else {
+    list_of_dates_already_loaded_centerfiles <- list_of_dates_already_loaded_centerfiles[[1]]
+  }
+  #-----------------------
+  if (is.data.frame(list_of_dates_already_loaded_counterparties) && nrow(list_of_dates_already_loaded_counterparties)==0) {
+    list_of_dates_already_loaded_counterparties <- as.Date(c("2001-01-01"))
+  } else {
+    list_of_dates_already_loaded_counterparties <- list_of_dates_already_loaded_counterparties[[1]]
+  }
+  #-----------------------
+  
+  # Convert the dates(available) to character (we don't want to use those weird POSIX date types!)
+  list_of_amort_rates_dates_available <- as.character.Date(list_of_amort_rates_dates_available)
+  list_of_centerfiles_dates_available <- as.character.Date(list_of_centerfiles_dates_available)
+  list_of_counterparties_dates_available <- as.character.Date(list_of_counterparties_dates_available)
+  
+  # Convert the dates(already imported) to character (we don't want to use those weird POSIX date types!)
+  list_of_dates_already_loaded_amort_rates <- as.character.Date(list_of_dates_already_loaded_amort_rates)
+  list_of_dates_already_loaded_centerfiles <- as.character.Date(list_of_dates_already_loaded_centerfiles)
+  list_of_dates_already_loaded_counterparties <- as.character.Date(list_of_dates_already_loaded_counterparties)
+  
+  # creates a subset list of the dates that are available but were not imported yet.
+  dates_to_process_amort_rates <- setdiff(list_of_amort_rates_dates_available, list_of_dates_already_loaded_amort_rates)
+  dates_to_process_centerfiles <- setdiff(list_of_centerfiles_dates_available, list_of_dates_already_loaded_centerfiles)
+  dates_to_process_counterparties <- setdiff(list_of_counterparties_dates_available, list_of_dates_already_loaded_counterparties)
+  
+  ################
+  
+  print(paste("    Date of Amortization Rates:", dates_to_process_amort_rates))
+  print(paste("    Date of Centerfile:        ", dates_to_process_centerfiles))  
+  print(paste("    Date of Counterparties:    ", dates_to_process_counterparties)) 
+  
+  ################################
+  # Check if there are real available dates that can be used.
+  if (length(dates_to_process_amort_rates) >= 1)   {
+    # Goes through each of the available dates that are not in the database yet, process the file, and dump to a unique output csv. 
+    for(idx_ar in 1:length(dates_to_process_amort_rates) )  {
+      rundate <-dates_to_process_amort_rates[idx_ar]
+      dt <- gsub("-","",rundate)
+      
+      amort_rates_to_import <- TRUE
+      
+      # This recreates the filename.
+      file_to_process_amort_rates <- paste0(branch_amort_rates, "_DXFB_AMORTIZATION_RATES_COMP_", dt, ".csv")
+      print(paste("    Processing file: ", file_to_process_amort_rates))
+      
+      # First we dump just the first line (the headers of the file)
+      field_list_amort_rates <- names(fread(file_to_process_amort_rates, na.strings=NULL, nrows=1, stringsAsFactors=FALSE, colClasses="character", verbose=FALSE))
+      
+      # Then we need to discard the latest field (Each line ends with a separator, and R interprets this as another field)  
+      field_list_amort_rates <- field_list_amort_rates[1:length(field_list_amort_rates)-1]
+      
+      # If this is the first time of the run, cleanup the content of file.        
+      if (index_path == 1 & idx_ar == 1) {    
+        flar <- append(field_list_amort_rates, c("filename","linenumber"),  after=0)
+        df_fieldnames_amort_rates <- read.table( text = "", col.names = flar, check.names = FALSE)
+        write.table(df_fieldnames_amort_rates, file=file_out_amort_rates, sep=";", append=FALSE, quote=FALSE, row.names=FALSE, col.names=TRUE)    
+        write.table(df_fieldnames_amort_rates, file=file_out_amort_rates_struct, sep=";", append=FALSE, quote=FALSE, row.names=FALSE, col.names=TRUE)            
+      }
+      
+      # Actually imports the file, forcing all the fields to be CHARACTER, and keeping all the fields selected on the line above.
+      amort_rates_df <- fread(file_to_process_amort_rates, na.strings=NULL, stringsAsFactors=FALSE, select=field_list_amort_rates, colClasses=list(character=field_list_amort_rates), verbose=FALSE)
+      
+      # Creates the filename field that will be placed in each line.
+      filename <- paste0(branch_amort_rates,"_SCHEDLS_",dt)
+      
+      # Creates the list of counting of rownumbers, that will be placed in each line.
+      linenumber <- as.integer(rownames(amort_rates_df))
+      
+      # Write the CSV (the linenumbers start with 2, because the first line is the header)
+      write.table(cbind(filename, linenumber=(linenumber+1) , amort_rates_df, deparse.level = 2), file=file_out_amort_rates, sep =";", dec=".", append=TRUE, quote=FALSE, row.names=FALSE, col.names=FALSE)  
+    }  
+  }
+  ################################  
+  # Check if there are real available dates that can be used.
+  if (length(dates_to_process_centerfiles) >= 1)   {
+    # Goes through each of the available dates that are not in the database yet, process the file, and dump to an output csv. 
+    for(idx_cf in 1:length(dates_to_process_centerfiles) )  {
+      rundate <-dates_to_process_centerfiles[idx_cf]
+      dt <- gsub("-","",rundate)
+      
+      centerfile_to_import <- TRUE
+      
+      # This recreates the filename.      
+      file_to_process_centerfiles <- paste0(branch_centerfiles, "_DXFB_CENTERNEW_", dt, ".csv")
+      print(paste("    Processing file: ", file_to_process_centerfiles))
+      
+      # First we dump just the first line (the headers of the file)        
+      field_list_centerfiles <- names(fread(file_to_process_centerfiles, na.strings=NULL, nrows=1, stringsAsFactors=FALSE, colClasses="character", verbose=FALSE))
+      
+      # Then we need to discard the latest field (Each line ends with a separator, and R interprets this as another field)  
+      field_list_centerfiles <- field_list_centerfiles[1:length(field_list_centerfiles)-1]
+      
+      # If this is the first time of the run, cleanup the content of file.        
+      if (index_path == 1 & idx_cf == 1) {    
+        flcf <- append(field_list_centerfiles, c("filename","linenumber"),  after=0)
+        df_fieldnames_centerfiles <- read.table( text = "", col.names = flcf, check.names = FALSE)
+        write.table(df_fieldnames_centerfiles, file=file_out_centerfiles, sep=";", append=FALSE, quote=FALSE, row.names=FALSE, col.names=TRUE)
+        write.table(df_fieldnames_centerfiles, file=file_out_centerfiles_struct, sep=";", append=FALSE, quote=FALSE, row.names=FALSE, col.names=TRUE)        
+      }
+      
+      # Actually imports the file, forcing all the fields to be CHARACTER, and keeping all the fields selected on the line above.      
+      centerfiles_df <- fread(file_to_process_centerfiles, na.strings=NULL, stringsAsFactors=FALSE, select=field_list_centerfiles, colClasses=list(character=field_list_centerfiles), verbose=FALSE)
+      
+      # Creates the filename field that will be placed in each line.
+      filename <- paste0(branch_centerfiles,"_CENTERF_",dt)
+      
+      # Creates the list of counting of rownumbers, that will be placed in each line.
+      linenumber <- as.integer(rownames(centerfiles_df))
+      
+      # Write the CSV (the linenumbers start with 2, because the first line is the header)
+      write.table(cbind(filename, linenumber=(linenumber+1) , centerfiles_df, deparse.level = 2), file=file_out_centerfiles, sep =";", dec=".", append=TRUE, quote=FALSE, row.names=FALSE, col.names=FALSE)  
+    }  
+  }  
+  ################################  
+  # Check if there are real available dates that can be used.
+  if (length(dates_to_process_counterparties) >= 1)   {
+    # Goes through each of the available dates that are not in the database yet, process the file, and dump to an output csv. 
+    for(idx_cp in 1:length(dates_to_process_counterparties) )  {
+      rundate <-dates_to_process_counterparties[idx_cp]
+      dt <- gsub("-","",rundate)
+      
+      counterparties_to_import <- TRUE
+      
+      # This recreates the filename.      
+      file_to_process_counterparties <- paste0(branch_counterparties, "_DXFB_COUNTERPARTIES_", dt, ".csv")
+      print(paste("    Processing file: ", file_to_process_counterparties))
+      
+      # First we dump just the first line (the headers of the file)
+      field_list_counterparties <- names(fread(file_to_process_counterparties, na.strings=NULL, nrows=1, stringsAsFactors=FALSE, colClasses="character", verbose=FALSE))
+      
+      # Then we need to discard the latest field (Each line ends with a separator, and R interprets this as another field)        
+      field_list_counterparties <- field_list_counterparties[1:length(field_list_counterparties)-1]
+      
+      # If this is the first time of the run, cleanup the content of file.        
+      if (index_path == 1 & idx_cp == 1) {    
+        flcp <- append(field_list_counterparties, c("filename","linenumber"),  after=0)
+        df_fieldnames_counterparties <- read.table( text = "", col.names = flcp, check.names = FALSE)
+        write.table(df_fieldnames_counterparties, file=file_out_counterparties, sep=";", append=FALSE, quote=FALSE, row.names=FALSE, col.names=TRUE)           
+        write.table(df_fieldnames_counterparties, file=file_out_counterparties_struct, sep=";", append=FALSE, quote=FALSE, row.names=FALSE, col.names=TRUE)           
+      }
+      
+      # Actually imports the file, forcing all the fields to be CHARACTER, and keeping all the fields selected on the line above.      
+      counterparties_df <- fread(file_to_process_counterparties, na.strings=NULL, stringsAsFactors=FALSE, select=field_list_counterparties, colClasses=list(character=field_list_counterparties), verbose=FALSE)
+      
+      # Creates the filename field that will be placed in each line.
+      filename <- paste0(branch_counterparties,"_COUNTER_",dt)
+      
+      # Creates the list of counting of rownumbers, that will be placed in each line.
+      linenumber <- as.integer(rownames(counterparties_df))
+      
+      # Write the CSV (the linenumbers start with 2, because the first line is the header)
+      write.table(cbind(filename, linenumber=(linenumber+1) , counterparties_df, deparse.level = 2), file=file_out_counterparties, sep =";", dec=".", append=TRUE, quote=FALSE, row.names=FALSE, col.names=FALSE)  
+    }  
+  }    
+}
+
+# --------------------------------------------------------------------------------------------------------------
+#| Phase 2: Now the CSV was exported to the server and need to be imported into a staging area.                 |
+# --------------------------------------------------------------------------------------------------------------
+print("---------------------------------------------------------------------------------------------------")
+print("  Phase 2: Test the FDW and place the exported CSV in temporary tables.                            ")
+print("---------------------------------------------------------------------------------------------------")
+
+# First, cleanup all the temporary tables.
+sql_cleanup_string <- "TRUNCATE acc_staging.t_temp_centerfile;"
+print("      Cleaning temporary table:  acc_staging.t_temp_centerfile")
+dbGetQuery(conn, sql_cleanup_string)
+
+sql_cleanup_string <- "TRUNCATE acc_staging.t_temp_counterparties;"
+print("      Cleaning temporary table:  acc_staging.t_temp_counterparties")
+dbGetQuery(conn, sql_cleanup_string)
+
+sql_cleanup_string <- "TRUNCATE acc_staging.t_temp_amortization_rates;"
+print("      Cleaning temporary table:  acc_staging.t_temp_amortization_rates")
+dbGetQuery(conn, sql_cleanup_string)                    
+
+# set the names of the Foreign Data Wrapers.
+fdw_list <- c("acc_staging.fdw_centerfile", "acc_staging.fdw_counterparties", "acc_staging.fdw_amort_rates")
+
+
+
+######### STEPXX BEGIN ######### 
+######### THIS IS WHERE THE COUNTERPARTIES AND CENTERFILE GET TOGEHTER ######### 
+# Check if something actually has to be done.
+if ((counterparties_to_import == TRUE)  || (centerfile_to_import == TRUE) || (amort_rates_to_import == TRUE)) {
+  # Goes to each of them and test if they are working. (if a FDW return an error, then the just don't execute anything and throw an error on screen)
+  for( fdw in fdw_list ) {
+    # Check whether you can query the file: (if you can't there was a problem in the import: The file generated may be empty, the column layout may be different, etc)
+    sql_exec <- paste0("select filename from ", fdw , " limit 1")
+    
+    options(show.error.messages = FALSE, warn = -1) 
+    try(res <- dbGetQuery(conn, sql_exec), silent=TRUE)
+    options(show.error.messages = TRUE, warn = 0) 
+    mesg <- dbGetException(conn)$errorMsg
+    
+    if( mesg == "OK" ) {
+      print(paste0("Testing FDW '", fdw, "': OK"))
+      if ( fdw == "acc_staging.fdw_centerfile") {
+        # insert all the data that is in the FDW to the temp table, by using the the function (which filters some fields and remodel some data)
+        sql_append_string <- "INSERT INTO acc_staging.t_temp_centerfile SELECT * FROM acc_staging.f_centerfile();"
+        print("      Populating table:          acc_staging.t_temp_centerfile")
+        dbGetQuery(conn, sql_append_string)
+        
+        # take all the lines with imported is null and delete them for this filetype.
+        sql_cleanup_old <- "DELETE FROM acc_staging.t_import_control WHERE filetype = 'CENTERF' AND ( status_import IS FALSE OR status_import IS NULL );"
+        dbGetQuery(conn, sql_cleanup_old)
+        
+        # Insert (for this filetype) all the dates that are on the temp table.
+        sql_import_control <- paste0("INSERT INTO acc_staging.t_import_control ",
+                                     "SELECT fnc.rundate, fnc.branch, 'CENTERF'::TEXT as filetype, fnc.amount_of_lines, current_timestamp::TIMESTAMP WITHOUT TIME ZONE as imported_on, NULL::boolean as available, TRUE::boolean as status_import ",
+                                     "FROM ( SELECT rundate, branch, COUNT(*)::INT AS amount_of_lines FROM acc_staging.f_centerfile() GROUP BY 1,2 ) fnc ",
+                                     " LEFT JOIN acc_staging.t_import_control tic ",
+                                     " ON fnc.rundate = tic.rundate AND fnc.branch = tic.branch AND tic.filetype = 'CENTERF' AND tic.status_import = TRUE ",
+                                     "WHERE tic.rundate IS NULL; ")
+        dbGetQuery(conn, sql_import_control)
+      } 
+      else if ( fdw == "acc_staging.fdw_counterparties") {
+        # insert all the data that is in the FDW to the temp table, by using the the function (which filters some fields and remodel some data)
+        sql_append_string <- "INSERT INTO acc_staging.t_temp_counterparties SELECT * FROM acc_staging.f_counterparties();"
+        print("      Populating table:          acc_staging.t_temp_counterparties")
+        dbGetQuery(conn, sql_append_string)
+        
+        # take all the lines with imported is null and delete them for this filetype.
+        sql_cleanup_old <- "DELETE FROM acc_staging.t_import_control WHERE filetype = 'COUNTER' AND ( status_import IS FALSE OR status_import IS NULL );"
+        dbGetQuery(conn, sql_cleanup_old)
+        
+        # Insert (for this filetype) all the dates that are on the temp table.
+        sql_import_control <- paste0("INSERT INTO acc_staging.t_import_control ",
+                                     "SELECT fnc.rundate, fnc.branch, 'COUNTER'::TEXT as filetype, fnc.amount_of_lines, current_timestamp::TIMESTAMP WITHOUT TIME ZONE as imported_on, NULL::boolean as available, TRUE::boolean as status_import ",
+                                     "FROM ( SELECT rundate, branch, COUNT(*)::INT AS amount_of_lines FROM acc_staging.f_counterparties() GROUP BY 1,2 ) fnc ",
+                                     " LEFT JOIN acc_staging.t_import_control tic ",
+                                     " ON fnc.rundate = tic.rundate AND fnc.branch = tic.branch AND tic.filetype = 'COUNTER' AND tic.status_import = TRUE ",
+                                     "WHERE tic.rundate IS NULL; ")
+        dbGetQuery(conn, sql_import_control)
+      } 
+      else if ( fdw == "acc_staging.fdw_amort_rates") {
+        # insert all the data that is in the FDW to the temp table, by using the the function (which filters some fields and remodel some data)
+        sql_append_string <- "INSERT INTO acc_staging.t_temp_amortization_rates SELECT * FROM acc_staging.f_amortization_rates();"
+        print("      Populating table:          acc_staging.t_temp_amortization_rates")
+        dbGetQuery(conn, sql_append_string)
+        
+        # take all the lines with imported is null and delete them for this filetype.
+        sql_cleanup_old <- "DELETE FROM acc_staging.t_import_control WHERE filetype = 'SCHEDLS' AND ( status_import IS FALSE OR status_import IS NULL );"
+        dbGetQuery(conn, sql_cleanup_old)
+        
+        # Insert (for this filetype) all the dates that are on the temp table.
+        sql_import_control <- paste0("INSERT INTO acc_staging.t_import_control ",
+                                     "SELECT fnc.rundate, fnc.branch, 'SCHEDLS'::TEXT as filetype, fnc.amount_of_lines, current_timestamp::TIMESTAMP WITHOUT TIME ZONE as imported_on, NULL::boolean as available, TRUE::boolean as status_import ",
+                                     "FROM ( SELECT rundate, branch, COUNT(*)::INT AS amount_of_lines FROM acc_staging.f_amortization_rates() GROUP BY 1,2 ) fnc ",
+                                     " LEFT JOIN acc_staging.t_import_control tic ",
+                                     " ON fnc.rundate = tic.rundate AND fnc.branch = tic.branch AND tic.filetype = 'SCHEDLS' AND tic.status_import = TRUE ",
+                                     "WHERE tic.rundate IS NULL; ")
+        print("      Updating the import table with values from the FDW")
+        dbGetQuery(conn, sql_import_control)                
+        
+        # insert data to final table, but check the dest tables for integrity.(insert the information from temp tables, just if the destination table doesn't have references for this date/branch)
+        # use some data range to lookup.
+        sql_insert_to_tbl <- paste0("WITH temp_table_range as ( SELECT MIN(rundate) as min_rdt, MAX(rundate) as max_rdt FROM acc_staging.f_amortization_rates() ) ",
+                                    ", on_temp_tbl as         ( SELECT rundate, branch FROM acc_staging.f_amortization_rates() GROUP BY 1,2 ) ",
+                                    ", on_destination_tbl as  ( SELECT rundate, branch FROM acc_staging.t_amortization_rates_placeholder WHERE rundate between ( SELECT min_rdt FROM temp_table_range) and ( SELECT max_rdt FROM temp_table_range) GROUP BY 1,2 ) ",
+                                    ", to_insert as           ( SELECT on_temp_tbl.rundate, on_temp_tbl.branch FROM on_temp_tbl LEFT JOIN on_destination_tbl ON on_temp_tbl.rundate = on_destination_tbl.rundate AND on_temp_tbl.branch = on_destination_tbl.branch WHERE on_destination_tbl.rundate IS NULL AND on_destination_tbl.branch IS NULL ) ",
+                                    "INSERT INTO acc_staging.t_amortization_rates_placeholder ",
+                                    "SELECT * FROM acc_staging.f_amortization_rates() src ",
+                                    "WHERE (src.rundate, src.branch) IN (select rundate, branch from to_insert); ")
+        print("      Inserting the data from the FDW to acc_staging.t_amortization_rates_placeholder")
+        dbGetQuery(conn, sql_insert_to_tbl)                            
+        
+        
+        #Update the t_import_control with status_duplicate = true for the dates that will be imported to t_amortization_rates_raw_placeholder
+        sql_update_duplicated <- paste0("WITH temp_table_range as   ( SELECT MIN(rundate) as min_rdt, MAX(rundate) as max_rdt FROM acc_staging.f_amortization_rates() ) ",
+                                        ", on_temp_tbl as           ( SELECT rundate, branch FROM acc_staging.f_amortization_rates() GROUP BY 1,2 )  ",
+                                        ", on_destination_tbl as    ( SELECT rundate, branch FROM acc_staging.t_amortization_rates_raw_placeholder WHERE rundate between ( SELECT min_rdt FROM temp_table_range) and ( SELECT max_rdt FROM temp_table_range) GROUP BY 1,2 )  ",
+                                        ", to_insert as             ( SELECT on_temp_tbl.rundate, on_temp_tbl.branch FROM on_temp_tbl LEFT JOIN on_destination_tbl ON on_temp_tbl.rundate = on_destination_tbl.rundate AND on_temp_tbl.branch = on_destination_tbl.branch WHERE on_destination_tbl.rundate IS NULL AND on_destination_tbl.branch IS NULL ) ",
+                                        ", date_branch_to_update as ( SELECT distinct rundate,branch FROM acc_staging.f_amortization_rates() src WHERE (src.rundate, src.branch) IN (select rundate, branch from to_insert)) ",
+                                        "UPDATE acc_staging.t_import_control ",
+                                        "SET status_duplicate = TRUE::BOOLEAN  ",
+                                        "FROM date_branch_to_update  ",
+                                        "WHERE t_import_control.rundate = date_branch_to_update.rundate   ",
+                                        "AND t_import_control.branch = date_branch_to_update.branch    ",
+                                        "AND t_import_control.filetype IN ('SCHEDLS'); ")
+        dbGetQuery(conn, sql_update_duplicated)                    
+        
+        # Do the same append to the RAW table.
+        sql_insert_to_tbl_raw <- paste0("WITH temp_table_range as ( SELECT MIN(rundate) as min_rdt, MAX(rundate) as max_rdt FROM acc_staging.f_amortization_rates() ) ",
+                                        ", on_temp_tbl as         ( SELECT rundate, branch FROM acc_staging.f_amortization_rates() GROUP BY 1,2 ) ",
+                                        ", on_destination_tbl as  ( SELECT rundate, branch FROM acc_staging.t_amortization_rates_raw_placeholder WHERE rundate between ( SELECT min_rdt FROM temp_table_range) and ( SELECT max_rdt FROM temp_table_range) GROUP BY 1,2 ) ",
+                                        ", to_insert as           ( SELECT on_temp_tbl.rundate, on_temp_tbl.branch FROM on_temp_tbl LEFT JOIN on_destination_tbl ON on_temp_tbl.rundate = on_destination_tbl.rundate AND on_temp_tbl.branch = on_destination_tbl.branch WHERE on_destination_tbl.rundate IS NULL AND on_destination_tbl.branch IS NULL ) ",
+                                        "INSERT INTO acc_staging.t_amortization_rates_raw_placeholder ",
+                                        "SELECT * FROM acc_staging.f_amortization_rates() src ",
+                                        "WHERE (src.rundate, src.branch) IN (select rundate, branch from to_insert); ")
+        print("      Inserting the data from the FDW to acc_staging.t_amortization_rates_raw_placeholder")
+        dbGetQuery(conn, sql_insert_to_tbl_raw)    
+      } 
+      
+    } else {
+      print(paste0("Testing FDW: ERROR! Check that the FDW: '", fdw,"' has the expected layout!"))
+    }
+  }
+  print("Matching Centerfile and Counterparties for each branch")
+  # Update the import control table to recognize the matched counterparties to the centerfiles.
+  sql_update_matched <- paste0("WITH centerf_ctrtbl as (SELECT DISTINCT rundate, branch FROM acc_staging.t_import_control WHERE filetype = 'CENTERF' ) ",
+                               ", counter_ctrtbl as     (SELECT DISTINCT rundate, branch FROM acc_staging.t_import_control WHERE filetype = 'COUNTER' ) ",
+                               ", centerf_available as  (SELECT DISTINCT rundate, branch FROM acc_staging.f_centerfile() ) ",
+                               ", counter_available as  (SELECT DISTINCT rundate, branch FROM acc_staging.f_counterparties() ) ",
+                               ", to_update as          (SELECT centerf_ctrtbl.rundate, centerf_ctrtbl.branch FROM centerf_ctrtbl  ",
+                               "                         INNER JOIN counter_ctrtbl    ON centerf_ctrtbl.rundate = counter_ctrtbl.rundate       AND centerf_ctrtbl.branch = counter_ctrtbl.branch ",
+                               "                         INNER JOIN centerf_available ON centerf_ctrtbl.rundate = centerf_available.rundate    AND centerf_ctrtbl.branch = centerf_available.branch ",
+                               "                         INNER JOIN counter_available ON centerf_available.rundate = counter_available.rundate AND centerf_available.branch = counter_available.branch ) ",
+                               "UPDATE acc_staging.t_import_control ",
+                               "SET status_match = TRUE::BOOLEAN ",
+                               "FROM to_update ",
+                               "WHERE t_import_control.rundate = to_update.rundate ",
+                               "AND t_import_control.branch = to_update.branch ",
+                               "AND t_import_control.filetype IN ('CENTERF','COUNTER') ")
+  dbGetQuery(conn, sql_update_matched)    
+  
+  # Delete non-matched:
+  sql_cleanup_nonmatch <- "DELETE FROM acc_staging.t_import_control WHERE filetype IN ('CENTERF','COUNTER') AND ( status_match IS NULL OR status_match IS FALSE );"
+  dbGetQuery(conn, sql_cleanup_nonmatch)
+  
+  print("Appending combined Centerfile and Counterparties to acc_staging.t_basis_short_placeholder")            
+  # Append the lines that are generated by the view v_basis_short to the table t_basis_short_placeholder, but only if they are matched, and available and still non-existing in the destination table.
+  sql_append_matched <- paste0("WITH centerf_ctrtbl as    (SELECT DISTINCT rundate, branch FROM acc_staging.t_import_control WHERE filetype = 'CENTERF' ) ",
+                               ", counter_ctrtbl as        (SELECT DISTINCT rundate, branch FROM acc_staging.t_import_control WHERE filetype = 'COUNTER' ) ",
+                               ", centerf_available as     (SELECT DISTINCT rundate, branch FROM acc_staging.f_centerfile() ) ",
+                               ", counter_available as     (SELECT DISTINCT rundate, branch FROM acc_staging.f_counterparties() ) ",
+                               ", temp_table_range as      (SELECT MIN(rundate) as min_rdt, MAX(rundate) as max_rdt FROM acc_staging.f_centerfile() ) ", 
+                               ", already_in_place as      (SELECT DISTINCT rundate, branch FROM acc_staging.t_basis_short_placeholder where rundate between (SELECT min_rdt FROM temp_table_range) and (SELECT max_rdt FROM temp_table_range)) ",
+                               ", date_branch_to_insert as (SELECT centerf_ctrtbl.rundate, centerf_ctrtbl.branch FROM centerf_ctrtbl ",
+                               "                            INNER JOIN counter_ctrtbl    ON centerf_ctrtbl.rundate = counter_ctrtbl.rundate       AND centerf_ctrtbl.branch = counter_ctrtbl.branch ",
+                               "                            INNER JOIN centerf_available ON centerf_ctrtbl.rundate = centerf_available.rundate    AND centerf_ctrtbl.branch = centerf_available.branch ",
+                               "                            INNER JOIN counter_available ON centerf_available.rundate = counter_available.rundate AND centerf_available.branch = counter_available.branch ",
+                               "                            LEFT JOIN  already_in_place  ON centerf_available.rundate = already_in_place.rundate  AND centerf_available.branch = already_in_place.branch ",
+                               "                            WHERE already_in_place.rundate IS NULL ) ",
+                               "INSERT INTO acc_staging.t_basis_short_placeholder ",
+                               "SELECT * ",
+                               "FROM acc_staging.v_basis_short ",
+                               "WHERE (rundate, branch) in (SELECT rundate, branch FROM date_branch_to_insert); ")
+  dbGetQuery(conn, sql_append_matched) 
+  
+  # update the t_import_control with status_duplicate = true for the dates that will be imported to t_basis_raw_placeholder
+  sql_update_duplicated <- paste0("WITH centerf_ctrtbl as (SELECT DISTINCT rundate, branch FROM acc_staging.t_import_control WHERE filetype = 'CENTERF' ) ", 
+                                  ", counter_ctrtbl as        (SELECT DISTINCT rundate, branch FROM acc_staging.t_import_control WHERE filetype = 'COUNTER' ) ",  
+                                  ", centerf_available as     (SELECT DISTINCT rundate, branch FROM acc_staging.f_centerfile() ) ",  
+                                  ", counter_available as     (SELECT DISTINCT rundate, branch FROM acc_staging.f_counterparties() ) ",  
+                                  ", temp_table_range as      (SELECT MIN(rundate) as min_rdt, MAX(rundate) as max_rdt FROM acc_staging.f_centerfile() )   ", 
+                                  ", already_in_place as      (SELECT DISTINCT rundate, branch FROM acc_staging.t_basis_raw_placeholder where rundate between (SELECT min_rdt FROM temp_table_range) and (SELECT max_rdt FROM temp_table_range))  ", 
+                                  ", date_branch_matching as  (SELECT centerf_ctrtbl.rundate, centerf_ctrtbl.branch FROM centerf_ctrtbl  ", 
+                                  "                            INNER JOIN counter_ctrtbl    ON centerf_ctrtbl.rundate = counter_ctrtbl.rundate       AND centerf_ctrtbl.branch = counter_ctrtbl.branch  ", 
+                                  "                            INNER JOIN centerf_available ON centerf_ctrtbl.rundate = centerf_available.rundate    AND centerf_ctrtbl.branch = centerf_available.branch  ", 
+                                  "                            INNER JOIN counter_available ON centerf_available.rundate = counter_available.rundate AND centerf_available.branch = counter_available.branch  ", 
+                                  "                            LEFT JOIN  already_in_place  ON centerf_available.rundate = already_in_place.rundate  AND centerf_available.branch = already_in_place.branch  ", 
+                                  "                            WHERE already_in_place.rundate IS NULL )  ", 
+                                  ", date_branch_to_update as (SELECT distinct rundate, branch FROM acc_staging.v_basis WHERE (rundate, branch) in (SELECT rundate, branch FROM date_branch_matching))  ",
+                                  "UPDATE acc_staging.t_import_control ", 
+                                  "SET status_duplicate = TRUE::BOOLEAN ", 
+                                  "FROM date_branch_to_update ", 
+                                  "WHERE t_import_control.rundate = date_branch_to_update.rundate ", 
+                                  "AND t_import_control.branch = date_branch_to_update.branch  ", 
+                                  "AND t_import_control.filetype IN ('CENTERF','COUNTER') ")
+  dbGetQuery(conn, sql_update_duplicated)     
+  
+  print("Appending combined Centerfile and Counterparties to acc_staging.t_basis_raw_placeholder")                
+  #Do the import process to raw structure
+  sql_append_matched_raw <- paste0("WITH centerf_ctrtbl as (SELECT DISTINCT rundate, branch FROM acc_staging.t_import_control WHERE filetype = 'CENTERF' ) ",
+                                   ", counter_ctrtbl as        (SELECT DISTINCT rundate, branch FROM acc_staging.t_import_control WHERE filetype = 'COUNTER' ) ",
+                                   ", centerf_available as     (SELECT DISTINCT rundate, branch FROM acc_staging.f_centerfile() ) ",
+                                   ", counter_available as     (SELECT DISTINCT rundate, branch FROM acc_staging.f_counterparties() ) ",
+                                   ", temp_table_range as      (SELECT MIN(rundate) as min_rdt, MAX(rundate) as max_rdt FROM acc_staging.f_centerfile() ) ", 
+                                   ", already_in_place as      (SELECT DISTINCT rundate, branch FROM acc_staging.t_basis_raw_placeholder where rundate between (SELECT min_rdt FROM temp_table_range) and (SELECT max_rdt FROM temp_table_range)) ",
+                                   ", date_branch_to_insert as (SELECT centerf_ctrtbl.rundate, centerf_ctrtbl.branch FROM centerf_ctrtbl ",
+                                   "                            INNER JOIN counter_ctrtbl    ON centerf_ctrtbl.rundate = counter_ctrtbl.rundate       AND centerf_ctrtbl.branch = counter_ctrtbl.branch ",
+                                   "                            INNER JOIN centerf_available ON centerf_ctrtbl.rundate = centerf_available.rundate    AND centerf_ctrtbl.branch = centerf_available.branch ",
+                                   "                            INNER JOIN counter_available ON centerf_available.rundate = counter_available.rundate AND centerf_available.branch = counter_available.branch ",
+                                   "                            LEFT JOIN  already_in_place  ON centerf_available.rundate = already_in_place.rundate  AND centerf_available.branch = already_in_place.branch ",
+                                   "                            WHERE already_in_place.rundate IS NULL ) ",
+                                   "INSERT INTO acc_staging.t_basis_raw_placeholder ",
+                                   "SELECT * ",
+                                   "FROM acc_staging.v_basis ",
+                                   "WHERE (rundate, branch) in (SELECT rundate, branch FROM date_branch_to_insert); ")
+  dbGetQuery(conn, sql_append_matched_raw) 
+} else {    
+  print("Nothing to process, there are no new files!")
+}
+######### STEPXX END ######### 
+#############################################################################################################
+######### STEPXX BEGIN ######### 
+
+# Again, cleanup all the temporary tables.
+sql_cleanup_string <- "TRUNCATE acc_staging.t_temp_centerfile;"
+print("      Cleaning temporary table:  acc_staging.t_temp_centerfile")
+dbGetQuery(conn, sql_cleanup_string)
+
+sql_cleanup_string <- "TRUNCATE acc_staging.t_temp_counterparties;"
+print("      Cleaning temporary table:  acc_staging.t_temp_counterparties")
+dbGetQuery(conn, sql_cleanup_string)
+
+sql_cleanup_string <- "TRUNCATE acc_staging.t_temp_amortization_rates;"
+print("      Cleaning temporary table:  acc_staging.t_temp_amortization_rates")
+dbGetQuery(conn, sql_cleanup_string)    
+
+# clean the FDW, leave the files blank.
+file.copy( file_out_amort_rates_struct, file_out_amort_rates, overwrite = TRUE )
+file.copy( file_out_centerfiles_struct, file_out_centerfiles, overwrite = TRUE )
+file.copy( file_out_counterparties_struct, file_out_counterparties, overwrite = TRUE )
+
+#############################################################################################################
+
+
+# goes back to the original folder.
+setwd(original_folder)
+
+# Close PostgreSQL connection 
+msg <- dbDisconnect(conn)
+msg <- dbUnloadDriver(dbDriver("PostgreSQL"))
+print("---------------------------------------------------------------------------------------------------")
+print("END")
+
