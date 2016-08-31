@@ -1,0 +1,381 @@
+-- Function: acc_treatment_layer.f_calculated_risk()
+
+-- DROP FUNCTION acc_treatment_layer.f_calculated_risk();
+
+CREATE OR REPLACE FUNCTION acc_treatment_layer.f_calculated_risk()
+  RETURNS TABLE(rundate date, country character varying, customer_number character varying, customer_name character varying, account_contract_number character varying, account_type character varying, gl integer, kontoart character varying, bs_agaap_key character varying, agaap_rprt character varying, bs_agaap_1 character varying, bs_agaap_2 character varying, bs_agaap_3 character varying, currency character varying, original_exposure_fcy double precision, original_exposure_lcy double precision, start_date date, maturity_date date, interbranch character varying, overdue_amount_lcy double precision, non_performing character varying, participations character varying, participation_account_contract_number character varying, participation_kontoart character varying, participation_gl integer, participation_amount_lcy double precision, exposure_net_sold_participations_lcy double precision, collaterals character varying, collateral_account_contract_number character varying, collateral_customer_name character varying, collateral_kontoart character varying, collateral_gl integer, collateral_product_type text, collateral_type text, collateral_amount_lcy double precision, collateral_deductable text, deductable_collateral_lcy double precision, exposure_net_participations_and_collaterals_lcy double precision, risk_provisions character varying, subject_to_credit_provision character varying, overruled_operation_risk character varying, operation_risk character varying, customer_risk character varying, operation_risk_provision_rate real, unnecessary_columns character varying, country_residence character varying, industry_code integer, customer_category character varying, start_date_text character varying, maturity_date_text character varying, interest_effective_rate double precision, interest_nominal_rate double precision, interest_commitment character varying, interest_date character varying, bb_group character varying, bank character varying, internal_rating character varying, economic_activity smallint, oenb_id integer, oenb_group_id integer, long_term_rating_fcy character varying, short_term_rating_fcy character varying, mfi_customer integer, overdraft_line character varying, overdraft_line_for_guarantees character varying, large_enterprise integer, country_of_ultimate_risk character varying, overdraft_line_center double precision, loan_purpose character varying, overdraft_start_date character varying, overdraft_maturity_date character varying, new_business character varying, due character varying, cancellation_notice_months character varying, depot_number character varying, depot_type character varying, security_number character varying, security_value double precision, book_value_lcy double precision, book_value_fcy double precision, market_value_lcy double precision, eligible character varying, market_value_fcy double precision, stock_exchange character varying, collateral_owner character varying, buy_currency character varying, sell_currency character varying, banking_trading_book character varying, buy_price_fcy double precision, buy_price_lcy double precision, market_value_buy_side_lcy double precision, sell_price_fcy double precision, sell_price_lcy double precision, market_value_sell_side_lcy double precision, patch_counterparties character varying, patch_inserted_line character varying, patch_component_level character varying, patch_contract_level character varying, generic_provision_lcy double precision, specific_provision_lcy double precision) AS
+$BODY$
+
+
+
+
+
+
+SELECT
+	s_base.*
+
+
+-- According to the Provisions Manual, all operations rated between AA and D are subject to Generic Provisions.
+-- As for Specific Provisions, anything less than E must have Specific Provision.
+-- Level of provisions are based on operation_risk_rates derived from the contract assigned operation_risk
+
+
+
+	,CASE
+		
+
+
+			WHEN	(
+			subject_to_credit_provision = 'Y'
+		AND	operation_risk			IN	('AA','A','B','C','D')	
+		
+		AND	operation_risk_provision_rate	IS NOT NULL				
+				)								THEN	coalesce(operation_risk_provision_rate, 0)	* exposure_net_participations_and_collaterals_lcy/100 *-1
+
+		ELSE	NULL
+	END AS generic_provision_lcy
+
+
+	,CASE
+ 		
+			WHEN	subject_to_credit_provision = 'Y'
+		AND	operation_risk			IN	('E','F','G','H')
+												THEN	coalesce(operation_risk_provision_rate, 0)	* exposure_net_participations_and_collaterals_lcy/100 *-1
+
+		ELSE	NULL
+	END AS specific_provision_lcy	
+	
+FROM
+
+(
+
+SELECT
+	 v_basis_balanced_eom.rundate
+	,v_basis_balanced_eom.country
+	,v_basis_balanced_eom.customer_number
+	,v_basis_balanced_eom.customer_name
+	,v_basis_balanced_eom.account_contract_number
+	,v_basis_balanced_eom.account_type
+	,v_basis_balanced_eom.gl
+	,v_basis_balanced_eom.kontoart
+	,v_basis_balanced_eom.bs_agaap_key
+
+	,v_basis_balanced_eom.agaap_rprt
+	,v_basis_balanced_eom.bs_agaap_1
+	,v_basis_balanced_eom.bs_agaap_2
+	,v_basis_balanced_eom.bs_agaap_3
+
+	,v_basis_balanced_eom.currency
+	,v_basis_balanced_eom.amount_fcy	AS original_exposure_fcy
+	,v_basis_balanced_eom.amount_lcy	AS original_exposure_lcy
+	,v_basis_balanced_eom.start_date
+	,v_basis_balanced_eom.maturity_date	 
+	,v_basis_balanced_eom.interbranch
+	,v_basis_balanced_eom.overdue_amount_lcy
+	,v_basis_balanced_eom.non_performing
+	
+-- this is the case of UNIAO which has two participations. Leave a message in case we get another contract with more than one participation.
+-- must talk to Suzi cause my table is returning no exposure after participations.... this is not exactly the case in her table
+-- so many questions in participations... why do we have sold participations with higher interest than the Originated Asset?
+-- why are there sold participations with maturity dates different from Originated Asset ?
+-- limit calculation of exposure amount to originated asset principal + accrual (formula in Bemessungsgrundlage)
+ 	,'----'::character varying 						AS participations
+	,f_participations.account_contract_number				AS participation_account_contract_number
+	,f_participations.kontoart						AS participation_kontoart
+	,f_participations.gl							AS participation_gl
+	,f_participations.amount_lcy 						AS participation_amount_lcy
+	,v_basis_balanced_eom.amount_lcy - coalesce(f_participations.amount_lcy, 0)	AS exposure_net_sold_participations_lcy
+
+
+
+-- collaterals to reduce exposure
+-- COLL from BB Miami is not deductable !!!! and from Customers also not.
+-- Customer collaterals are not taken into account because Accounting would need to have such collaterals clustered by type
+-- and also priced-to-marked monthly. Since the total amount of such available collaterals are not so significant,
+-- the pricing to market becames too much work for little benefit
+-- notice that the code matches collaterals.customer number to bb_list.mci, as to identify all collaterals presented by BB Group (bb_list Join)
+--
+-- BB Miami Stand Bys (mci = xxxxxxx) are not considered as Elegible Collaterals.
+
+ 	,'----'::character varying 						AS collaterals
+	,f_collaterals.account_contract_number 					AS collateral_account_contract_number
+	,f_collaterals.customer_name						AS collateral_customer_name
+	,f_collaterals.kontoart 						AS collateral_kontoart
+	,f_collaterals.gl							AS collateral_gl
+	,substring(f_collaterals.account_contract_number,4,4)			AS collateral_product_type
+
+	,CASE
+		WHEN	substring(f_collaterals.account_contract_number,4,4) 		IN ('CDDV', 'CDDX', 'MMHV', 'CDCV', 'CDCX', 'MMHL')	THEN 'Pledge Agreements'
+
+		WHEN	(
+				substring(f_collaterals.account_contract_number,4,4) 	IN ('COLL')	
+			AND	bb_list.mci						IS NOT NULL
+			AND	bb_list.mci						<> '907091338'
+			)															THEN 'Stand by BB'
+
+		WHEN	(
+				substring(f_collaterals.account_contract_number,4,4) 	IN ('COLL')	
+			AND	(
+					bb_list.mci						IS NULL
+				OR	bb_list.mci						= '907091338'
+				)
+
+			)															THEN 'Other Collaterals'			
+		ELSE	NULL
+	END 									AS collateral_type
+	
+
+	,f_collaterals.amount_lcy AS collateral_amount_lcy
+
+
+	,CASE
+		WHEN	substring(f_collaterals.account_contract_number,4,4) 		IN ('CDDV', 'CDDX', 'MMHV', 'CDCV', 'CDCX', 'MMHL')	THEN 'Y'
+		WHEN	(
+				substring(f_collaterals.account_contract_number,4,4) 	IN ('COLL')	
+			AND	bb_list.mci						IS NOT NULL
+			AND	bb_list.mci						<> '907091338'
+			)															THEN 'Y'
+
+		WHEN	(
+				substring(f_collaterals.account_contract_number,4,4) 	IN ('COLL')	
+			AND	(
+					bb_list.mci						IS NULL
+				OR	bb_list.mci						= '907091338'
+				)
+			)															THEN 'N'
+		ELSE	'-'
+	END AS collateral_deductable
+
+
+-- Discuss with Suzi .. apparently all it is a simple rule that collateral_amount_lcy can not deduce more than exposure_amount_lcy
+-- this must actually be clarified... is the collateral to be tested against the exposure (Asset - Participation) or is it to be tested only against the Asset
+-- The code only tests against the Assets, for the moment there is no examples of reduced exposures by participation that additionally present collaterals.
+-- must define which kind of products can be booked as Eligible Collaterals (write in a Manual and Instruct Servicing Center and BU).
+-- in order to find Eligible Collaterals type COLL, the code refer to bb_list dont trust the names and actually point to mci bb_list - public
+	,CASE
+		WHEN	substring(f_collaterals.account_contract_number,4,4) 		IN ('CDDV', 'CDDX', 'MMHV', 'CDCV', 'CDCX', 'MMHL')	
+			AND	v_basis_balanced_eom.amount_lcy <= coalesce(f_collaterals.amount_lcy, 0)
+																		THEN 	coalesce(f_collaterals.amount_lcy, 0)
+
+		WHEN	substring(f_collaterals.account_contract_number,4,4) 		IN ('CDDV', 'CDDX', 'MMHV', 'CDCV', 'CDCX', 'MMHL')	
+			AND	v_basis_balanced_eom.amount_lcy > coalesce(f_collaterals.amount_lcy, 0)
+	
+
+
+																		THEN 	v_basis_balanced_eom.amount_lcy	
+
+		WHEN	(
+				substring(f_collaterals.account_contract_number,4,4) 	IN ('COLL')	
+			AND	bb_list.mci						IS NOT NULL
+			AND	bb_list.mci						<> '907091338'
+			)															
+			AND	v_basis_balanced_eom.amount_lcy <= coalesce(f_collaterals.amount_lcy, 0)
+																		THEN 	coalesce(f_collaterals.amount_lcy, 0)
+
+
+		WHEN	(
+				substring(f_collaterals.account_contract_number,4,4) 	IN ('COLL')	
+			AND	bb_list.mci						IS NOT NULL
+			AND	bb_list.mci						<> '907091338'
+			)																
+			AND	v_basis_balanced_eom.amount_lcy > coalesce(f_collaterals.amount_lcy, 0)
+																		THEN 	v_basis_balanced_eom.amount_lcy			
+		ELSE	0
+	END AS deductable_collateral_lcy
+		
+	
+
+
+	,CASE
+		WHEN	substring(f_collaterals.account_contract_number,4,4) 		IN ('CDDV', 'CDDX', 'MMHV', 'CDCV', 'CDCX', 'MMHL')	
+			AND	v_basis_balanced_eom.amount_lcy <= coalesce(f_collaterals.amount_lcy, 0)
+		THEN 	v_basis_balanced_eom.amount_lcy - coalesce(f_participations.amount_lcy, 0) - coalesce(f_collaterals.amount_lcy, 0)
+
+
+		WHEN	substring(f_collaterals.account_contract_number,4,4) 		IN ('CDDV', 'CDDX', 'MMHV', 'CDCV', 'CDCX', 'MMHL')	
+			AND	v_basis_balanced_eom.amount_lcy > coalesce(f_collaterals.amount_lcy, 0)
+		THEN 	v_basis_balanced_eom.amount_lcy - coalesce(f_participations.amount_lcy, 0) - v_basis_balanced_eom.amount_lcy
+
+
+		WHEN	(
+				substring(f_collaterals.account_contract_number,4,4) 	IN ('COLL')	
+			AND	bb_list.mci						IS NOT NULL
+			AND	bb_list.mci						<> '907091338'
+			)															
+			AND	v_basis_balanced_eom.amount_lcy <= coalesce(f_collaterals.amount_lcy, 0)
+		THEN 	v_basis_balanced_eom.amount_lcy - coalesce(f_participations.amount_lcy, 0) - coalesce(f_collaterals.amount_lcy, 0)
+
+
+		WHEN	(
+				substring(f_collaterals.account_contract_number,4,4) 	IN ('COLL')	
+			AND	bb_list.mci						IS NOT NULL
+			AND	bb_list.mci						<> '907091338'
+			)																
+			AND	v_basis_balanced_eom.amount_lcy > coalesce(f_collaterals.amount_lcy, 0)
+		THEN 	v_basis_balanced_eom.amount_lcy - coalesce(f_participations.amount_lcy, 0) - v_basis_balanced_eom.amount_lcy
+
+		ELSE	v_basis_balanced_eom.amount_lcy - coalesce(f_participations.amount_lcy, 0)
+	END AS exposure_net_participations_and_collaterals_lcy
+
+--
+	,'----'::character varying AS risk_provisions
+
+-- These are the kinds of accounts/contracts which must be excluded from provision calculations:
+-- Cash Accounts ('112')
+-- Bonds ('113')
+-- Nostro Accounts ('1112')
+-- Provision Accounts ('1158')
+-- Sold Participations - Principal and Accruals ('11563' and '11521')
+-- Fiduciary Contracts ('115621000', '115201000', '211651000')
+-- Debt Restructuring - Principal and Accruals ('115600000', '115660000') maybe this must be in !!!
+-- Guarantees ('C2')
+
+	,CASE
+		WHEN substring(cast(v_basis_balanced_eom.gl as character varying), 1, 3)	IN ('112', '113')							THEN 'N'
+		WHEN substring(cast(v_basis_balanced_eom.gl as character varying), 1, 4)	IN ('1112', '1158')							THEN 'N'
+		WHEN substring(cast(v_basis_balanced_eom.gl as character varying), 1, 5)	IN ('11521', '11563')							THEN 'N'
+		WHEN v_basis_balanced_eom.gl 						IN ('115621000', '115201000', '211651000')	THEN 'N'
+		WHEN v_basis_balanced_eom.bs_agaap_key					IN ('C2')								THEN 'N'
+		ELSE	'Y'
+	END AS	subject_to_credit_provision
+
+
+-- COMMENT XX
+-- First, we demonstrate Accounting has Overrule Power over Operation Ratings from Brazil.
+-- That is done by registering specific contracts whose rating are to be overruled in t_operation_risk_overrules
+-- For contracts whose ratings have been overrule, this "overruled_operation_risk" column will indicate what was the original rating
+-- while the "operation_risk" will show a composition of all final ratings.
+	,CASE
+		WHEN	v_basis_balanced_eom.operation_risk_overrule	IS NOT NULL	THEN	v_basis_balanced_eom.operation_risk
+		ELSE	NULL
+	END	AS overruled_operation_risk
+	
+
+	,CASE
+		WHEN	v_basis_balanced_eom.operation_risk_overrule	IS NOT NULL	THEN	v_basis_balanced_eom.operation_risk_overrule
+		ELSE	coalesce(v_basis_balanced_eom.operation_risk, '-')
+	END	AS operation_risk
+
+	,v_basis_balanced_eom.customer_risk
+--	,v_basis_balanced_eom.specific_risk_provision_rate	-- Eliminated column from f_basis_treatment
+	,t_operation_risk_provision_rates.operation_risk_provision_rate
+--	,v_basis_balanced_eom.generic_risk_provision_rate  -- Eliminated column from f_basis_treatment
+
+,'----'::character varying AS unnecessary_columns
+
+		,country_residence
+		,industry_code
+		,customer_category
+		,start_date_text
+		,maturity_date_text
+		,interest_effective_rate
+		,interest_nominal_rate
+		,interest_commitment
+		,interest_date
+		,bb_group
+		,bank
+
+		,internal_rating
+		,economic_activity
+		,oenb_id
+		,oenb_group_id
+
+		,long_term_rating_fcy
+		,short_term_rating_fcy
+		,mfi_customer
+		,overdraft_line
+		,overdraft_line_for_guarantees
+		,large_enterprise
+		,country_of_ultimate_risk
+
+		,overdraft_line_center
+		,loan_purpose
+		,overdraft_start_date
+		,overdraft_maturity_date
+		,new_business
+		,due
+		,cancellation_notice_months
+		,depot_number
+		,depot_type
+		,security_number
+		,security_value
+		,book_value_lcy
+		,book_value_fcy
+		,market_value_lcy
+		,eligible
+		,market_value_fcy
+		,stock_exchange
+		,collateral_owner
+		,buy_currency
+		,sell_currency
+		,banking_trading_book
+		,buy_price_fcy
+		,buy_price_lcy
+		,market_value_buy_side_lcy
+		,sell_price_fcy
+		,sell_price_lcy
+		,market_value_sell_side_lcy
+		,patch_counterparties
+		,patch_inserted_line
+		,patch_component_level
+		,patch_contract_level
+
+
+FROM
+
+-- Attention to the join: in order to get the amount of participations linked to a contract, v_basis_balanced_eom.collateral = f_participatons.account_contract_number
+	acc_treatment_layer.v_basis_balanced_eom
+	LEFT JOIN acc_treatment_layer.f_participations() ON
+			v_basis_balanced_eom.rundate			=	f_participations.rundate
+		AND	v_basis_balanced_eom.country				=	f_participations.country
+		AND	v_basis_balanced_eom.collateral			=	f_participations.account_contract_number
+		AND	coalesce(v_basis_balanced_eom.kontoart, 'NA')	=	coalesce(f_participations.kontoart, 'NA')
+
+
+-- Attention to the join: in order to get the amount of collaterals linked to a contract, v_basis_balanced_eom.collateral = f_collaterals.account_contract_number
+	LEFT JOIN acc_treatment_layer.f_collaterals() ON
+			v_basis_balanced_eom.rundate			=	f_collaterals.rundate
+		AND	v_basis_balanced_eom.country				=	f_collaterals.country
+		AND	v_basis_balanced_eom.collateral			=	f_collaterals.account_contract_number
+		AND	coalesce(v_basis_balanced_eom.kontoart, 'NA')	=	coalesce(f_collaterals.kontoart, 'NA')
+
+
+-- This join was reviewed to enable the column "operation_risk_provision_rate" deriving from the "operation_risk" column (refer to COMMENT XX)
+-- 	LEFT JOIN acc_treatment_layer.t_operation_risk_provision_rates ON
+-- 			v_basis_balanced_eom.operation_risk			=	t_operation_risk_provision_rates.operation_risk
+		
+	LEFT JOIN acc_treatment_layer.t_operation_risk_provision_rates ON
+			t_operation_risk_provision_rates.operation_risk	=	CASE
+											WHEN	v_basis_balanced_eom.operation_risk_overrule	IS NOT NULL	THEN	v_basis_balanced_eom.operation_risk_overrule
+											ELSE	coalesce(v_basis_balanced_eom.operation_risk, '-')
+										END
+
+
+	LEFT JOIN bb_list ON
+			f_collaterals.customer_number			=	bb_list.mci
+
+	
+WHERE
+
+-- discuss with Balazs if the following selected keys ares sufficient or if further keys must be brought in...
+-- 	v_basis_balanced_eom.rundate IN ('31-03-2016','29-04-2016')
+	v_basis_balanced_eom.bs_agaap_key	IN ('A2','A2a','A3a','A3b','A4','A5a','A5c','A6', 'C1b', 'C2')
+        AND	v_basis_balanced_eom.country		<> 'DE'
+
+
+ORDER BY 1,2,3,4,5,6,7,8,9	
+
+)	AS s_base
+
+
+;
+
+$BODY$
+  LANGUAGE sql VOLATILE
+  COST 100
+  ROWS 150;
+ALTER FUNCTION acc_treatment_layer.f_calculated_risk()
+  OWNER TO "RW";
+GRANT EXECUTE ON FUNCTION acc_treatment_layer.f_calculated_risk() TO public;
+GRANT EXECUTE ON FUNCTION acc_treatment_layer.f_calculated_risk() TO "RO" WITH GRANT OPTION;
+GRANT EXECUTE ON FUNCTION acc_treatment_layer.f_calculated_risk() TO "RW";
