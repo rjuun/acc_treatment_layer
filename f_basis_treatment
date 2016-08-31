@@ -1,0 +1,550 @@
+-- Function: acc_treatment_layer.f_basis_treatment()
+
+-- DROP FUNCTION acc_treatment_layer.f_basis_treatment();
+
+CREATE OR REPLACE FUNCTION acc_treatment_layer.f_basis_treatment()
+  RETURNS TABLE(pkey character varying, rundate date, country character varying, gl integer, account_contract_number character varying, customer_number character varying, customer_name character varying, account_type character varying, currency character varying, amount_fcy double precision, amount_lcy double precision, country_residence character varying, industry_code integer, customer_category character varying, start_date_text character varying, maturity_date_text character varying, interest_effective_rate double precision, interest_nominal_rate double precision, interest_commitment character varying, interest_date character varying, bb_group character varying, bank character varying, start_date date, maturity_date date, internal_rating character varying, economic_activity smallint, oenb_id integer, oenb_group_id integer, collateral character varying, long_term_rating_fcy character varying, short_term_rating_fcy character varying, mfi_customer integer, overdraft_line character varying, overdraft_line_for_guarantees character varying, large_enterprise integer, country_of_ultimate_risk character varying, bad_debt_provision_lcy double precision, overdue_amount_lcy double precision, overdraft_line_center double precision, loan_purpose character varying, overdraft_start_date character varying, overdraft_maturity_date character varying, new_business character varying, due character varying, cancellation_notice_months character varying, depot_number character varying, depot_type character varying, security_number character varying, security_value double precision, book_value_lcy double precision, book_value_fcy double precision, market_value_lcy double precision, eligible character varying, market_value_fcy double precision, stock_exchange character varying, collateral_owner character varying, buy_currency character varying, sell_currency character varying, banking_trading_book character varying, buy_price_fcy double precision, buy_price_lcy double precision, market_value_buy_side_lcy double precision, sell_price_fcy double precision, sell_price_lcy double precision, market_value_sell_side_lcy double precision, patch_counterparties character varying, patch_inserted_line character varying, patch_component_level character varying, patch_contract_level character varying, concept character varying, non_performing character varying, customer_risk character varying, operation_risk character varying, operation_risk_overrule character varying, category character varying, gl_desc character varying, bs_agaap_key character varying, agaap_rprt character varying, bs_agaap_1 character varying, bs_agaap_2 character varying, bs_agaap_3 character varying, detail_guv character varying, pnl_agaap_key character varying, codex_mapa_moedas character varying, descr_mapa_moedas character varying, kontoart character varying, interbranch character varying) AS
+$BODY$
+/*
+This function brings t_basis_raw and t_basis_adjustments together.
+First, t_basis_adjustments are brought fully with their concepts (ersatz or umbuchung).
+Then, all lines from t_basis_raw are brought, but with the "concept" field defined as "cf" or "cf_delete".
+
+The concept for t_basis lines is defined based on the following logic:
+When a t_basis_adjustment is registered, it is meant to replace (delete) or add corrections to a Center File line.
+
+For that, a key formed with:
+- rundate
+- country
+- account_contract_number
+- customer_number
+- account_type
+- currency
+... is used to find whenever an "adjustment" line is matched in "t_basis_raw" and set its concept as cf_del.
+
+Lines in t_basis_adjustments that do not match any line in t_basis are considered as "additions", which falls under the concept as cf.
+
+Corrections registered under the concept of Umbuchung will result in this adjstment line being added on top of whatever there already is on the Center File.
+
+At the end (last "select") bs_key concepts and interbranch tags are added to the lines
+
+*/
+
+
+WITH t_interbranch as	(
+	select
+		unnest(array['907092156', '907091392', '907091275', '907091178', '906138691']) as customer_number, 
+		unnest(array['AT','IT','ES','PT','FR']) as customer_country
+			) 
+
+SELECT
+  
+  
+   
+  
+  
+   s_angepasst_with_index_keys.pkey
+  ,s_angepasst_with_index_keys.rundate
+  ,s_angepasst_with_index_keys.country
+  ,s_angepasst_with_index_keys.gl
+  ,s_angepasst_with_index_keys.account_contract_number
+  ,s_angepasst_with_index_keys.customer_number
+  ,s_angepasst_with_index_keys.customer_name
+  ,s_angepasst_with_index_keys.account_type
+  ,s_angepasst_with_index_keys.currency
+  ,s_angepasst_with_index_keys.amount_fcy
+  ,s_angepasst_with_index_keys.amount_lcy
+  ,s_angepasst_with_index_keys.country_residence
+  ,s_angepasst_with_index_keys.industry_code
+  ,s_angepasst_with_index_keys.customer_category
+  ,s_angepasst_with_index_keys.start_date_text
+  ,s_angepasst_with_index_keys.maturity_date_text
+  ,s_angepasst_with_index_keys.interest_effective_rate
+  ,s_angepasst_with_index_keys.interest_nominal_rate
+  ,s_angepasst_with_index_keys.interest_commitment
+  ,s_angepasst_with_index_keys.interest_date
+  ,s_angepasst_with_index_keys.bb_group
+  ,s_angepasst_with_index_keys.bank
+  ,s_angepasst_with_index_keys.start_date
+  ,s_angepasst_with_index_keys.maturity_date
+  ,s_angepasst_with_index_keys.internal_rating
+  ,s_angepasst_with_index_keys.economic_activity
+  ,s_angepasst_with_index_keys.oenb_id
+  ,s_angepasst_with_index_keys.oenb_group_id
+  ,s_angepasst_with_index_keys.collateral
+  ,s_angepasst_with_index_keys.long_term_rating_fcy
+  ,s_angepasst_with_index_keys.short_term_rating_fcy
+  ,s_angepasst_with_index_keys.mfi_customer
+  ,s_angepasst_with_index_keys.overdraft_line
+  ,s_angepasst_with_index_keys.overdraft_line_for_guarantees
+  ,s_angepasst_with_index_keys.large_enterprise
+  ,s_angepasst_with_index_keys.country_of_ultimate_risk
+  ,s_angepasst_with_index_keys.bad_debt_provision_lcy
+
+  ,CASE
+    WHEN  f_overdue_components.amount_past_overdue_lcy IS NOT NULL  THEN amount_past_overdue_lcy
+    ELSE NULL
+  END AS  overdue_amount_lcy
+
+
+  ,s_angepasst_with_index_keys.overdraft_line_center
+  ,s_angepasst_with_index_keys.loan_purpose
+  ,s_angepasst_with_index_keys.overdraft_start_date
+  ,s_angepasst_with_index_keys.overdraft_maturity_date
+  ,s_angepasst_with_index_keys.new_business
+  ,s_angepasst_with_index_keys.due
+  ,s_angepasst_with_index_keys.cancellation_notice_months
+  ,s_angepasst_with_index_keys.depot_number
+  ,s_angepasst_with_index_keys.depot_type
+  ,s_angepasst_with_index_keys.security_number
+  ,s_angepasst_with_index_keys.security_value
+  ,s_angepasst_with_index_keys.book_value_lcy
+  ,s_angepasst_with_index_keys.book_value_fcy
+  ,s_angepasst_with_index_keys.market_value_lcy
+  ,s_angepasst_with_index_keys.eligible
+  ,s_angepasst_with_index_keys.market_value_fcy
+  ,s_angepasst_with_index_keys.stock_exchange
+  ,s_angepasst_with_index_keys.collateral_owner
+  ,s_angepasst_with_index_keys.buy_currency
+  ,s_angepasst_with_index_keys.sell_currency
+  ,s_angepasst_with_index_keys.banking_trading_book
+  ,s_angepasst_with_index_keys.buy_price_fcy
+  ,s_angepasst_with_index_keys.buy_price_lcy
+  ,s_angepasst_with_index_keys.market_value_buy_side_lcy
+  ,s_angepasst_with_index_keys.sell_price_fcy
+  ,s_angepasst_with_index_keys.sell_price_lcy
+  ,s_angepasst_with_index_keys.market_value_sell_side_lcy
+  ,s_angepasst_with_index_keys.patch_counterparties
+  ,s_angepasst_with_index_keys.patch_inserted_line
+  ,s_angepasst_with_index_keys.patch_component_level
+  ,s_angepasst_with_index_keys.patch_contract_level
+  ,s_angepasst_with_index_keys.concept
+  ,s_angepasst_with_index_keys.non_performing
+  ,s_angepasst_with_index_keys.customer_risk
+  ,s_angepasst_with_index_keys.operation_risk
+  ,s_angepasst_with_index_keys.operation_risk_overrule
+  ,s_angepasst_with_index_keys.category
+  ,s_angepasst_with_index_keys.gl_desc
+  ,s_angepasst_with_index_keys.bs_agaap_key
+  ,s_angepasst_with_index_keys.agaap_rprt
+  ,s_angepasst_with_index_keys.bs_agaap_1
+  ,s_angepasst_with_index_keys.bs_agaap_2
+  ,s_angepasst_with_index_keys.bs_agaap_3
+  ,s_angepasst_with_index_keys.detail_guv
+  ,s_angepasst_with_index_keys.pnl_agaap_key
+  ,s_angepasst_with_index_keys.codex_mapa_moedas
+  ,s_angepasst_with_index_keys.descr_mapa_moedas
+  ,s_angepasst_with_index_keys.kontoart
+  ,s_angepasst_with_index_keys.interbranch
+
+
+FROM
+
+(
+SELECT
+
+		 s_angepasst.pkey
+		,s_angepasst.rundate
+		,s_angepasst.country
+		,s_angepasst.gl
+		,s_angepasst.account_contract_number
+		,s_angepasst.customer_number
+		,s_angepasst.customer_name
+		,s_angepasst.account_type
+		,s_angepasst.currency
+		,s_angepasst.amount_fcy
+		,s_angepasst.amount_lcy
+		,s_angepasst.country_residence
+		,s_angepasst.industry_code
+		,s_angepasst.customer_category
+		,s_angepasst.start_date_text
+		,s_angepasst.maturity_date_text
+		,s_angepasst.interest_effective_rate
+		,s_angepasst.interest_nominal_rate
+		,s_angepasst.interest_commitment
+		,s_angepasst.interest_date
+		,s_angepasst.bb_group
+		,s_angepasst.bank
+		,s_angepasst.start_date
+		,s_angepasst.maturity_date
+		,s_angepasst.internal_rating
+		,s_angepasst.economic_activity
+		,s_angepasst.oenb_id
+		,s_angepasst.oenb_group_id
+		,s_angepasst.collateral
+		,s_angepasst.long_term_rating_fcy
+		,s_angepasst.short_term_rating_fcy
+		,s_angepasst.mfi_customer
+		,s_angepasst.overdraft_line
+		,s_angepasst.overdraft_line_for_guarantees
+		,s_angepasst.large_enterprise
+		,s_angepasst.country_of_ultimate_risk
+		,s_angepasst.bad_debt_provision_lcy
+		,s_angepasst.overdue_amount_lcy
+		,s_angepasst.overdraft_line_center
+		,s_angepasst.loan_purpose
+		,s_angepasst.overdraft_start_date
+		,s_angepasst.overdraft_maturity_date
+		,s_angepasst.new_business
+		,s_angepasst.due
+		,s_angepasst.cancellation_notice_months
+		,s_angepasst.depot_number
+		,s_angepasst.depot_type
+		,s_angepasst.security_number
+		,s_angepasst.security_value
+		,s_angepasst.book_value_lcy
+		,s_angepasst.book_value_fcy
+		,s_angepasst.market_value_lcy
+		,s_angepasst.eligible
+		,s_angepasst.market_value_fcy
+		,s_angepasst.stock_exchange
+		,s_angepasst.collateral_owner
+		,s_angepasst.buy_currency
+		,s_angepasst.sell_currency
+		,s_angepasst.banking_trading_book
+		,s_angepasst.buy_price_fcy
+		,s_angepasst.buy_price_lcy
+		,s_angepasst.market_value_buy_side_lcy
+		,s_angepasst.sell_price_fcy
+		,s_angepasst.sell_price_lcy
+		,s_angepasst.market_value_sell_side_lcy
+		,s_angepasst.patch_counterparties
+		,s_angepasst.patch_inserted_line
+		,s_angepasst.patch_component_level
+		,s_angepasst.patch_contract_level
+		,s_angepasst.concept
+
+
+-- 		,t_overdue_and_non_performing_loans.overdue --here we return to set this field based on the new code
+		,t_operation_risk_overrules.non_performing
+-- 		,t_overdue_and_non_performing_loans.specific_risk_provision 
+-- 		,t_overdue_and_non_performing_loans.generic_risk_provision 
+-- 		,t_overdue_and_non_performing_loans.specific_risk_provision_rate
+-- 		,t_overdue_and_non_performing_loans.generic_risk_provision_rate
+		,s_bdd.customer_risk
+		,s_bdd.operation_risk
+		
+		,t_operation_risk_overrules.operation_risk_overrule		
+
+		,t_index_country.category 
+		,t_index_country.gl_desc 
+
+		,CASE
+			WHEN s_angepasst.amount_lcy <= 0::double precision AND s_angepasst.bank::text = 'Y'::text THEN t_index_country.index_bbag_assets_bank
+			WHEN s_angepasst.amount_lcy <= 0::double precision AND s_angepasst.bank::text = 'N'::text THEN t_index_country.index_bbag_assets_non_bank
+			WHEN s_angepasst.amount_lcy > 0::double precision AND s_angepasst.bank::text = 'Y'::text THEN t_index_country.index_bbag_liabilities_bank
+			WHEN s_angepasst.amount_lcy > 0::double precision AND s_angepasst.bank::text = 'N'::text THEN t_index_country.index_bbag_liabilities_non_bank
+			ELSE ''::character varying
+		END AS bs_agaap_key
+
+		,t_agaap_structure.agaap_rprt
+		,t_agaap_structure.agaap_1	AS	bs_agaap_1
+		,t_agaap_structure.agaap_2	AS	bs_agaap_2
+		,t_agaap_structure.agaap_3	AS	bs_agaap_3
+		
+		,t_index_country.detail_guv
+		,t_index_country.index_bbag_pnl	AS	pnl_agaap_key
+		,t_index_country.codex_mapa_moedas
+		,t_index_country.descr_mapa_moedas 
+		,t_index_country.kontoart
+
+
+	-- Looks for Business Units which are Customers from one another, and stablish a directional BU -> BU reference
+	-- based on originating and customer BU
+		,CASE
+			WHEN	s_angepasst.customer_number IN ('907092156', '907091392', '907091275', '907091178', '906138691') 
+			AND	s_angepasst.country <> t_interbranch.customer_country
+				THEN s_angepasst.country || '->' || t_interbranch.customer_country
+			ELSE NULL
+		END AS interbranch
+
+
+FROM
+
+(
+
+SELECT
+	 pkey
+	,rundate
+	,country
+	,gl
+	,account_contract_number
+	,customer_number
+	,customer_name
+	,account_type
+	,currency
+	,amount_fcy
+	,amount_lcy
+	,country_residence
+	,industry_code
+	,customer_category
+	,start_date_text
+	,maturity_date_text
+	,interest_effective_rate
+	,interest_nominal_rate
+	,interest_commitment
+	,interest_date
+	,bb_group
+	,bank
+	,start_date
+	,maturity_date
+	,internal_rating
+	,economic_activity
+	,oenb_id
+	,oenb_group_id
+	,collateral
+	,long_term_rating_fcy
+	,short_term_rating_fcy
+	,mfi_customer
+	,overdraft_line
+	,overdraft_line_for_guarantees
+	,large_enterprise
+	,country_of_ultimate_risk
+	,bad_debt_provision_lcy
+	,overdue_amount_lcy
+	,overdraft_line_center
+	,loan_purpose
+	,overdraft_start_date
+	,overdraft_maturity_date
+	,new_business
+	,due
+	,cancellation_notice_months
+	,depot_number
+	,depot_type
+	,security_number
+	,security_value
+	,book_value_lcy
+	,book_value_fcy
+	,market_value_lcy
+	,eligible
+	,market_value_fcy
+	,stock_exchange
+	,collateral_owner
+	,buy_currency
+	,sell_currency
+	,banking_trading_book
+	,buy_price_fcy
+	,buy_price_lcy
+	,market_value_buy_side_lcy
+	,sell_price_fcy
+	,sell_price_lcy
+	,market_value_sell_side_lcy
+	,patch_counterparties
+	,patch_inserted_line
+	,patch_component_level
+	,patch_contract_level
+	,concept
+
+FROM
+	acc_treatment_layer.t_basis_adjustments
+WHERE
+	rundate = (select max(eom_process_rundate) from acc_treatment_layer.t_eom_rundate)
+
+
+----------------------------------------------
+UNION ALL
+----------------------------------------------
+
+
+SELECT
+	 pkey
+	,rundate
+	,country
+	,gl
+	,account_contract_number
+	,customer_number
+	,customer_name
+	,account_type
+	,currency
+	,amount_fcy
+	,amount_lcy
+	,country_residence
+	,industry_code
+	,customer_category
+	,start_date_text
+	,maturity_date_text
+	,interest_effective_rate
+	,interest_nominal_rate
+	,interest_commitment
+	,interest_date
+	,bb_group
+	,bank
+	,start_date
+	,maturity_date
+	,internal_rating
+	,economic_activity
+	,oenb_id
+	,oenb_group_id
+	,collateral
+	,long_term_rating_fcy
+	,short_term_rating_fcy
+	,mfi_customer
+	,overdraft_line
+	,overdraft_line_for_guarantees
+	,large_enterprise
+	,country_of_ultimate_risk
+	,bad_debt_provision_lcy
+	,overdue_amount_lcy
+	,overdraft_line_center
+	,loan_purpose
+	,overdraft_start_date
+	,overdraft_maturity_date
+	,new_business
+	,due
+	,cancellation_notice_months
+	,depot_number
+	,depot_type
+	,security_number
+	,security_value
+	,book_value_lcy
+	,book_value_fcy
+	,market_value_lcy
+	,eligible
+	,market_value_fcy
+	,stock_exchange
+	,collateral_owner
+	,buy_currency
+	,sell_currency
+	,banking_trading_book
+	,buy_price_fcy
+	,buy_price_lcy
+	,market_value_buy_side_lcy
+	,sell_price_fcy
+	,sell_price_lcy
+	,market_value_sell_side_lcy
+	,patch_counterparties
+	,patch_inserted_line
+	,patch_component_level
+	,patch_contract_level
+	
+
+-- COMMENT 09
+-- Deriving from COMMENT 10, all lines from center_file which have been tagged with an adjustment
+-- will be labeled to be deleted - "CF_DEL".
+-- All other remaining lines will be labeled to have it source identified - "CF"
+	,CASE
+		WHEN concept IS NULL THEN 'CF'
+		WHEN concept IN ('E') THEN 'CF_DEL'
+	END AS concept
+
+FROM		
+-- COMMENT 10
+-- Here all lines from t_basis are selected, with an additional column "concept".
+-- This column tests if there is a line in t_basis_adjustmnets with the same key in t_basis:
+--	 rundate
+--	,country
+--	,account_contract_number
+-- 	,customer_number
+-- 	,account_type
+--	,currency
+
+-- In case there is an "adjustmnet" in t_basis_adjustment, this line from the center file
+-- will be filled with "E" (or the associated code).
+-- In case no adjustment is present, a blank value will return as concept, which later will be treated
+-- 
+-- (refer to COMMENT 09)
+	(
+	SELECT
+		 t_basis.*
+ 		,filtered_adjustments.concept 
+
+	FROM
+		acc_treatment_layer.t_basis	LEFT JOIN	(
+						SELECT *
+						FROM acc_treatment_layer.t_basis_adjustments 
+						WHERE concept NOT IN ('U')
+						) filtered_adjustments	ON
+		
+			t_basis.rundate			=   filtered_adjustments.rundate					
+		AND	t_basis.country			=   filtered_adjustments.country					
+		AND	t_basis.account_contract_number	=   filtered_adjustments.account_contract_number	
+		AND	t_basis.customer_number		=   filtered_adjustments.customer_number			
+		AND	t_basis.account_type		=   filtered_adjustments.account_type			
+		AND	t_basis.currency		=   filtered_adjustments.currency
+
+		
+	WHERE
+			t_basis.rundate = (select max(eom_process_rundate) from acc_treatment_layer.t_eom_rundate)
+		AND	t_basis.country NOT IN ('DE')
+		
+	) AS s_t_basis_joined_to_adjustments
+		
+)	AS s_angepasst
+
+
+   LEFT JOIN
+	acc_treatment_layer.t_index_country ON 
+		s_angepasst.gl = t_index_country.gl
+	AND	s_angepasst.country = t_index_country.country
+   
+--    LEFT JOIN 
+-- 	acc_treatment_layer.t_overdue_and_non_performing_loans ON 
+-- 		s_angepasst.country::text 		= t_overdue_and_non_performing_loans.country::text 
+-- 	AND	s_angepasst.customer_number::text 	= t_overdue_and_non_performing_loans.customer_number::text
+
+
+   LEFT JOIN
+		(
+
+		SELECT
+			t_bdd.rundate
+			,t_bbag_corporate_structure.country
+			,t_bdd.customer_number
+			,t_bdd.customer_risk
+			,t_bdd.contract_number
+			,t_bdd.operation_risk 
+
+
+		FROM
+			acc_treatment_layer.t_bdd
+		LEFT JOIN
+				hrd_structure.t_bbag_corporate_structure ON 
+			t_bbag_corporate_structure.unit_code = t_bdd.pf_dep_opr
+		
+		) s_bdd ON 
+		s_angepasst.rundate 			= s_bdd.rundate 
+	AND 	s_angepasst.country::text 		= s_bdd.country::text 
+	AND 	s_angepasst.customer_number::text 	= s_bdd.customer_number::text
+	AND 	s_angepasst.account_contract_number::text 	= s_bdd.contract_number::text
+
+   LEFT JOIN
+	acc_treatment_layer.t_operation_risk_overrules ON
+		s_angepasst.rundate			=	t_operation_risk_overrules.overrule_start_date
+	AND	s_angepasst.customer_number		=	t_operation_risk_overrules.customer_number	
+	AND	s_angepasst.account_contract_number	=	t_operation_risk_overrules.account_contract_number
+
+   LEFT JOIN t_interbranch ON
+	s_angepasst.customer_number		=	t_interbranch.customer_number	
+
+   LEFT JOIN acc_treatment_layer.t_agaap_structure ON
+	t_agaap_structure.key = CASE
+					WHEN s_angepasst.amount_lcy <= 0::double precision AND s_angepasst.bank::text = 'Y'::text THEN t_index_country.index_bbag_assets_bank
+					WHEN s_angepasst.amount_lcy <= 0::double precision AND s_angepasst.bank::text = 'N'::text THEN t_index_country.index_bbag_assets_non_bank
+					WHEN s_angepasst.amount_lcy > 0::double precision AND s_angepasst.bank::text = 'Y'::text THEN t_index_country.index_bbag_liabilities_bank
+					WHEN s_angepasst.amount_lcy > 0::double precision AND s_angepasst.bank::text = 'N'::text THEN t_index_country.index_bbag_liabilities_non_bank
+					ELSE NULL
+				END	
+
+) s_angepasst_with_index_keys
+
+
+	LEFT JOIN acc_treatment_layer.f_overdue_components() ON
+
+		f_overdue_components.rundate 			= s_angepasst_with_index_keys.rundate
+	AND	f_overdue_components.country 			= s_angepasst_with_index_keys.country
+	AND	f_overdue_components.account_contract_number	= s_angepasst_with_index_keys.account_contract_number
+	AND	f_overdue_components.component			= s_angepasst_with_index_keys.kontoart
+	AND	s_angepasst_with_index_keys.concept 			<> 'CF_DEL'							-- Not to unnecessarily impact CF_DEL lines
+	AND	s_angepasst_with_index_keys.gl 				NOT IN ('115882000', '115881002')		-- Not to impact credit provision lines
+
+;
+
+$BODY$
+  LANGUAGE sql VOLATILE
+  COST 100
+  ROWS 150;
+ALTER FUNCTION acc_treatment_layer.f_basis_treatment()
+  OWNER TO "RW";
+GRANT EXECUTE ON FUNCTION acc_treatment_layer.f_basis_treatment() TO public;
+GRANT EXECUTE ON FUNCTION acc_treatment_layer.f_basis_treatment() TO "RO" WITH GRANT OPTION;
+GRANT EXECUTE ON FUNCTION acc_treatment_layer.f_basis_treatment() TO "RW";
