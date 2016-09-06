@@ -1,0 +1,299 @@
+-- Function: acc_treatment_layer.f_counterparties_vertical_adjustments()
+
+-- DROP FUNCTION acc_treatment_layer.f_counterparties_vertical_adjustments();
+
+CREATE OR REPLACE FUNCTION acc_treatment_layer.f_counterparties_vertical_adjustments()
+  RETURNS TABLE(rundate date, country character varying, customer_number character varying, customer_name character varying, country_residence character varying, long_term_rating_fcy character varying, short_term_rating_fcy character varying, internal_rating character varying, industry_code integer, customer_category character varying, mfi_customer integer, oenb_id integer, oenb_group_id integer, bb_group character varying, overdraft_line character varying, overdraft_line_for_guarantees character varying, large_enterprise integer, country_of_ultimate_risk character varying, economic_activity smallint, concept character varying) AS
+$BODY$	
+---------------------------------------------------------------------------------------------------------
+
+
+
+SELECT
+	
+	t_counterparties.rundate
+	,country
+	,t_counterparties.customer_number
+	,customer_name
+
+/* COUNTRYY RESIDENCE
+	-- In case customer_number is between 0 and 1000, contry_of_residence is set as the country (branch)
+	-- These customers are Service Providers of BBAG. They are not actual "customers". For that, we use their
+	-- country of residence as the very country of the BU
+*/	
+	,CASE
+
+		WHEN	CAST(t_counterparties.customer_number AS integer) between 0 and 1000	THEN country
+		ELSE 	country_residence
+
+	END AS country_residence
+
+	 
+
+/* LONG TERM RATING FCY AND LCY, AND INTERNAL RATING
+	-- Specially for normalizing the information of GBB customers
+	-- and for BBAG
+		'907092156'			'BANCO DO BRASIL AG VIENA'
+		'907091178'			'BANCO DO BRASIL AG LISBOA'
+		'907091275'			'BANCO DO BRASIL AG MADRI'
+		'906138691'			'BANCO DO BRASIL AG PARIS'
+		'907091392'			'BANCO DO BRASIL SA MILAO'
+
+*/	
+	,CASE
+		WHEN t_bb_list.customer_number IS NOT NULL THEN 'BB' 		-- changed from BB+ on 22.12.2015... need to get new rating date
+										-- BBAG ('907092156', '907091178', '907091275', '906138691', '907091392') is already in the list
+		ELSE 	long_term_rating_fcy
+	END AS long_term_rating_fcy
+
+
+	,CASE
+		WHEN t_bb_list.customer_number IS NOT NULL THEN 'B' 		-- changed from A-3  on 22.12.2015... need to get new rating date
+										-- BBAG ('907092156', '907091178', '907091275', '906138691', '907091392') is already in the list
+		ELSE 	short_term_rating_fcy
+	END AS short_term_rating_fcy
+
+
+	,CASE
+		WHEN t_bb_list.customer_number IS NOT NULL THEN 'A' 		
+										-- BBAG ('907092156', '907091178', '907091275', '906138691', '907091392') is already in the list
+		ELSE 	customer_risk
+	END AS internal_rating
+
+	
+
+/* INDUSTRY CODE
+	-- Whenever a counterparty has empty INDUSTRY CODE, force:
+		-- COMP		-> 61
+		-- CTR_BNK	-> 10
+		-- IND, PRIVATE	-> 70
+		-- FIN_INT, GBB	-> 3 
+		-- GOV_ENT 	-> 49
+
+	* Special case is applied to find customers from bb_list and apply all their Industry Code to 3
+	
+	-- In case customer_number is between 0 and 1000, industry_code depend on the country, being 
+		-- AT 		-> 3
+		-- ELSE 	-> 14
+	-- In case of WALK IN CUSTOMER
+		-- 		-> 3
+		-- '442726412'	'BBVIE WALK IN CUSTOMER'
+		-- '443177618'	'BBPAR WALK IN CUSTOMER'
+		-- '443250568'	'BBMIL WALK IN CUSTOMER'
+		-- '444169007'	'BBMDI WALK IN CUSTOMER'
+		-- '444674733'	'BBPTO WALK IN CUSTOMER'
+		-- '444674760'	'BBCCP WALK IN CUSTOMER'
+		-- '444674776'	'BBCCS WALK IN CUSTOMER'
+		-- '444674797'	'BBNAC WALK IN CUSTOMER'
+		-- '444674818'	'BBMPB WALK IN CUSTOMER'
+		-- '444674833'	'BBCOR WALK IN CUSTOMER'
+		-- '445557942'	'BBSCE WALK IN CUSTOMER'
+		-- '445840228'	'BBFFT WALK IN CUSTOMER'
+*/	
+	,CASE
+		WHEN	industry_code		IS NULL
+		AND	customer_category	IN ('COMP')		THEN 61
+
+		WHEN	industry_code		IS NULL
+		AND	customer_category	IN ('CTR_BNK')		THEN 10
+		
+		WHEN	industry_code		IS NULL
+		AND	customer_category	IN ('IND','PRIVATE')	
+									THEN 70
+
+		WHEN	industry_code		IS NULL
+		AND	customer_category	IN ('FIN_INT','GBB')	THEN 3
+
+		WHEN	industry_code		IS NULL
+		AND	customer_category	IN ('GOV_ENT')		THEN 49
+
+
+-- WOULD LIKE TO CHECK IF IT IS NECESSARY TO CODE LIKE customer_number between  and 1000, or if t_bb_list is enough.
+-- Also consider BBAG ('907092156', '907091178', '907091275', '906138691', '907091392')
+-- Use the same concept for all other places in the code where customer number less than 1000 is used
+		WHEN	CAST(t_counterparties.customer_number AS integer) between 0 and 1000
+		AND	country = 'AT'					THEN 3
+
+		WHEN	CAST(t_counterparties.customer_number AS integer) between 0 and 1000
+		AND	country <> 'AT'					THEN 14
+
+		WHEN	t_bb_list.customer_number IS NOT NULL 
+		AND	industry_code		IS NOT NULL		THEN 3
+
+		WHEN	t_counterparties.customer_number 		IN ('442726412', '443177618', '443250568', '444169007', '444674733', '444674760', '444674776', '444674797', '444674818', '444674833', '445557942', '445840228')
+		AND	industry_code		IS NOT NULL	
+									THEN 3
+		
+		ELSE 	industry_code
+
+	END AS industry_code
+
+/*
+		,case 
+					when patch_counterparties is null 		
+						then 'Adjustment NR MCI' || customernumber || '-00000000+A.Patched on ' || to_char(current_timestamp, 'YYYY-MM-DD HH24:MI')
+					when patch_counterparties is NOT null 	
+						then regexp_replace(patch_counterparties, '\. ', '+A.')
+					end as patch_counterparties 
+*/
+
+
+
+/* CUSTOMER CATEGORY
+	-- In case customer_number is between 0 and 1000, customer_category is set as GBB
+	-- In case of WALK IN CUSTOMER
+	-- In case of customer being in bb_list, it must also be set to GBB
+*/	
+	,CASE
+
+		WHEN	CAST(t_counterparties.customer_number AS integer) between 0 and 1000	THEN 'GBB'
+		WHEN	t_counterparties.customer_number 		IN ('442726412', '443177618', '443250568', '444169007', '444674733', '444674760', '444674776', '444674797', '444674818', '444674833', '445557942', '445840228')
+												THEN 'FIN_INT'
+
+		WHEN	t_bb_list.customer_number IS NOT NULL 					THEN 'GBB'										
+												
+		ELSE 	customer_category
+
+	END AS customer_category
+
+	
+
+
+/* MFI_CUSTOMER
+
+Suzi warned us on 2nd of DEC 2014 that this list is not right, she will provide us with a list of customers and also send to SCE to fix in the system 
+PART 5a:
+	-- Whenever a counterparty has the field MFI_CUSTOMER set to <> 0, force 0. According to Suzi, the only customers with MFI = 1 should be:
+		-- 906138691 	BANCO DO BRASIL AG PARIS
+		-- 907091178 	BANCO DO BRASIL AG LISBOA
+		-- 907091275 	BANCO DO BRASIL AG MADRI
+		-- 907091392 	BANCO DO BRASIL SA MILAO
+		-- 419562517 	BANCO BILBAO VIZCAYA ARGENTARIA S.A. BBVA
+		-- 907092156	BANCO DO BRASIL AG VIENA
+		-- 419562924	BANCO DO BRASIL S A LONDON
+		-- 929778132	BANCO DO BRASIL S.A.-VIENA
+		-- 907092339	BANCO DO BRASIL SA LONDRES
+		-- 418288589	BANCO DO BRASIL SA FRANKFURT
+		
+PART 5b:
+		-- Whenever a counterparty has the field MFI_CUSTOMER set to 0 and is one of the MCIs from the list below, set the MFI = 1!
+
+*/
+
+	,CASE
+
+		WHEN	t_counterparties.customer_number IN	('906138691','907091178','907091275','907091392','419562517','907092156','419562924','929778132','907092339','418288589')
+				THEN	1
+
+		WHEN	t_counterparties.customer_number NOT IN	('906138691','907091178','907091275','907091392','419562517','907092156','419562924','929778132','907092339','418288589')		
+				THEN	0
+
+	END AS 	mfi_customer
+
+
+
+/* OENB ID
+	-- Specially for normalizing the information of GBB customers
+	-- and for BBAG
+*/	
+	,CASE
+		WHEN t_bb_list.customer_number 		IS NOT NULL THEN 422215 		
+		WHEN t_counterparties.customer_number	IN ('907092156', '907091178', '907091275', '906138691', '907091392') THEN 53759
+		ELSE 	oenb_id
+	END AS oenb_id	
+
+
+/* OENB GROUP ID
+	-- Specially for normalizing the information of GBB customers
+	-- and for BBAG
+*/	
+	,CASE
+		WHEN t_bb_list.customer_number 		IS NOT NULL THEN 90422215 		
+		WHEN t_counterparties.customer_number	IN ('907092156', '907091178', '907091275', '906138691', '907091392') THEN NULL
+		ELSE 	oenb_group_id
+	END AS oenb_group_id	
+	
+
+/* BB GROUP
+	-- Specially for normalizing the information of GBB customers
+	-- and for BBAG
+
+*/
+	
+	,CASE
+		WHEN t_bb_list.customer_number IS NOT NULL THEN 'Group'		-- remember that BBAG ('907092156', '907091178', '907091275', '906138691', '907091392') is already in the list
+		ELSE 	bb_group
+	END AS bb_group	
+	
+
+	,overdraft_line
+	,overdraft_line_for_guarantees
+			
+
+/* LARGE ENTERPRISE
+PART 6:
+	The only counterparties with a LARGE_ENTERPRISE = 1 should be the ones in the BB_LIST. 
+	This query clears the LARGE_ENTERPRISE field from those counterparties that are are not in the list and 
+	set the field to 1 on those counterparties that are on the list, but had the field either null or 0.
+*/
+	,CASE
+		WHEN t_bb_list.customer_number IS NOT NULL THEN 1
+		ELSE 0
+	END AS large_enterprise
+/*	
+		patch_counterparties =	case 
+					when patch_counterparties is null 		
+						then 'Adjustment NR MCI' || t_basis_short.customernumber || '-00000000+A.Patched on ' || to_char(current_timestamp, 'YYYY-MM-DD HH24:MI') 
+					when patch_counterparties is NOT null 	
+						then regexp_replace(patch_counterparties, '\. ', '+A.')
+					end
+	
+	GET DIAGNOSTICS temporary_lines_impacted = ROW_COUNT;
+	amount_of_impacted_rows := amount_of_impacted_rows + temporary_lines_impacted;
+*/
+
+	,country_of_ultimate_risk
+	,economic_activity
+	,'COUNTER_VERT'::character varying AS concept
+
+
+
+
+FROM
+	acc_staging.t_counterparties
+
+	LEFT JOIN acc_treatment_layer.t_bb_list ON
+		t_bb_list.customer_number	= t_counterparties.customer_number
+
+
+-- Here we need to make a select distinct because the file t_bdd comes with more than one contract to the same customer,
+-- inducing multiplication of lines in our final result. (DONE)
+-- Furthermore, we need to address the situation of the same customer having different customer_risk for the same rundate (NEEDS TO BE DONE!!)
+-- Ideally, t_bdd table should have a "checkpoint" query
+
+	LEFT JOIN (
+			SELECT DISTINCT
+				 rundate
+				,customer_number
+				,customer_risk
+			FROM
+				acc_treatment_layer.t_bdd
+		) s_t_bdd_distinct		 ON
+		s_t_bdd_distinct.rundate		= t_counterparties.rundate
+	AND	s_t_bdd_distinct.customer_number	= t_counterparties.customer_number
+	
+WHERE
+	t_counterparties.rundate = (select max(eom_process_rundate) from acc_treatment_layer.t_eom_rundate)
+	
+
+	;
+
+$BODY$
+  LANGUAGE sql VOLATILE
+  COST 100
+  ROWS 50000;
+ALTER FUNCTION acc_treatment_layer.f_counterparties_vertical_adjustments()
+  OWNER TO "RW";
+GRANT EXECUTE ON FUNCTION acc_treatment_layer.f_counterparties_vertical_adjustments() TO public;
+GRANT EXECUTE ON FUNCTION acc_treatment_layer.f_counterparties_vertical_adjustments() TO "RO" WITH GRANT OPTION;
+GRANT EXECUTE ON FUNCTION acc_treatment_layer.f_counterparties_vertical_adjustments() TO "RW";
